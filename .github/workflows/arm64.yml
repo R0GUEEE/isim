@@ -76,14 +76,18 @@ jobs:
       - name: Debug (crash backtrace)
         if: failure()
         run: |
-          docker run --rm -v "$PWD:$PWD" -w "$PWD" -e CI=1 isim-ci sh -c '
-            ls -l isim/out/bin/isim-runtime || true; file isim/out/bin/isim-runtime 2>/dev/null || true
-            readelf -l isim/out/bin/isim-runtime 2>/dev/null | grep -A1 interpreter || true
-            ldd isim/out/bin/isim-runtime 2>&1 | head -20
-            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq gdb >/dev/null 2>&1
-            echo "--- gdb:"; gdb -batch -ex run -ex "info registers x0 x1 x2 x8 sp pc" -ex "x/8gx &protocol_class" \
-              -ex "p/x protocol_class" -ex "p/x protocol_class.rt" -ex "p sizeof(struct rt_class)" -ex "bt 8" \
-              --args isim/out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | tail -40' || true
+          cat > /tmp/dbg.sh <<'SH'
+          set -x
+          cd /work
+          ls -l isim/out/bin/isim-runtime
+          apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq gdb >/dev/null 2>&1
+          gdb -batch -ex 'run' -ex 'p/x $x0' -ex 'p/x $x1' -ex 'p/x $x8' -ex 'info registers sp pc' \
+              -ex 'x/8gx &protocol_class' -ex 'p/x protocol_class' -ex 'p/x protocol_class.rt' \
+              -ex 'bt 8' --args isim/out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib > /tmp/gdb.txt 2>&1
+          echo "===== gdb output ====="
+          sed -n '1,80p' /tmp/gdb.txt
+          SH
+          docker run --rm -v "$PWD:/work" -w /work -v /tmp/dbg.sh:/tmp/dbg.sh -e CI=1 isim-ci sh /tmp/dbg.sh || true
       - name: File ownership
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" isim/out third_party || true
