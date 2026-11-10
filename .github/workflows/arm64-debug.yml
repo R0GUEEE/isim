@@ -43,17 +43,6 @@ jobs:
         if: always()
         run: |
           sudo chown -R "$(id -u):$(id -g)" isim/out || true
-          for f in $(find isim/out -name '*.ips' | head -2); do
-            echo "=== $f"; head -c 6000 "$f"; echo
-            python3 - "$f" <<'PY'
-import json, sys
-raw = open(sys.argv[1]).read()
-body = raw[raw.index('\n') + 1:]
-d = json.loads(body)
-print('exception:', d.get('exception'), d.get('termination', {}).get('indicator'))
-for t in d.get('threads', [])[:1]:
-    for fr in t.get('frames', [])[:24]:
-        print('   ', fr.get('imageIndex'), hex(fr.get('imageOffset', 0)), fr.get('symbol', ''))
-print('images:', [i.get('name') for i in d.get('usedImages', [])][:12])
-PY
+          find isim/out -name '*.ips' | head -3 | while read -r f; do
+            echo "=== $f"; sed -n '1,2p' "$f" | cut -c1-400; python3 isim/ci/crash-summary.py "$f"
           done
