@@ -932,7 +932,7 @@ XCFRAMEWORK_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 			<key>HeadersPath</key><string>Headers</string>
 			<key>LibraryIdentifier</key><string>{XCF_PLATFORM}</string>
 			<key>LibraryPath</key><string>libSum.a</string>
-			<key>SupportedArchitectures</key><array><string>{arch.GUEST}</string></array>
+			<key>SupportedArchitectures</key><array><string>{arch}</string></array>
 			<key>SupportedPlatform</key><string>ios</string>
 			<key>SupportedPlatformVariant</key><string>simulator</string>
 		</dict>
@@ -967,7 +967,7 @@ def sum_xcframework():
     for f in ("sum.h", "module.modulemap"):
         shutil.copy(os.path.join(a.d, "Vendor", "Sum", f), os.path.join(sl, "Headers"))
     with open(os.path.join(xcf, "Info.plist"), "w") as f:
-        f.write(XCFRAMEWORK_PLIST.format(XCF_PLATFORM=XCF_PLATFORM))
+        f.write(XCFRAMEWORK_PLIST.format(XCF_PLATFORM=XCF_PLATFORM, arch=arch.GUEST))
 
 
 @app("samples/HelloToolchain", extra_inputs=[f"{XCF}/{f}" for f in XCF_FILES])
