@@ -68,7 +68,7 @@ ISIM_ASM_CALLEE static int d_openat_c(int dirfd, const char *path, int dflags, i
 __asm__(".text\n.globl d_openat\n.type d_openat,%function\nd_openat:\n  ldr w3, [sp]\n  b d_openat_c\n");
 #define d_openat d_openat_c
 #endif
-ISIM_GUEST_ABI static int d_open(const char *path, int dflags, int mode) { return open_locks(open(path, oflags_from_darwin(dflags), mode), dflags); }
+ISIM_ASM_CALLEE ISIM_GUEST_ABI static int d_open(const char *path, int dflags, int mode) { return open_locks(open(path, oflags_from_darwin(dflags), mode), dflags); }
 /* openat(2): Darwin's AT_FDCWD is -2 */
 static int dirfd_from_darwin(int dirfd) { return dirfd == -2 ? AT_FDCWD : dirfd; }
 ISIM_ASM_CALLEE ISIM_GUEST_ABI static int d_openat(int dirfd, const char *path, int dflags, int mode) {
