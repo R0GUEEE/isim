@@ -106,3 +106,51 @@ jobs:
             !isim/out/pytest
             !isim/out/test-*
           key: build-arm64-${{ github.sha }}-${{ github.run_id }}
+
+  # every test, on the build the job above made (docs/TESTING.md): the guest apps run on arm64 like on x86-64, so this
+  # is where the port's ABI work (objc_msgSend, the variadic bridge, the guards) is judged, not just compiled
+  test:
+    name: test (arm64)
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - name: CI image (Ubuntu 24.04, arm64)
+        uses: docker/build-push-action@v7
+        with:
+          context: isim/ci
+          load: true
+          tags: isim-ci
+          cache-from: type=gha,scope=arm64-ci
+      - name: Build (from the build job)
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            isim/out
+            !isim/out/pytest
+            !isim/out/test-*
+          key: build-arm64-${{ github.sha }}-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: Swift toolchain (from the build job)
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/swift-toolchain
+          key: ${{ env.SWIFT_KEY }}
+          fail-on-cache-miss: true
+      - name: Test
+        run: |
+          docker run --rm -v "$PWD:$PWD" -w "$PWD" \
+            -v "$HOME/swift-toolchain:$HOME/swift-toolchain:ro" -e ISIM_SWIFT_TOOLCHAIN="$HOME/swift-toolchain" \
+            -e CI=1 -e ISIM_TEST_JOBS="$(nproc)" -e ISIM_WAIT_SCALE=3 isim-ci python3 isim/build.py ci test
+      - name: File ownership (tests)
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" isim/out
+      - name: Test summary
+        if: always()
+        run: |
+          echo "### arm64" >> "$GITHUB_STEP_SUMMARY"
+          cat isim/out/test-summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
