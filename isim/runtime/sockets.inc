@@ -308,7 +308,16 @@ static int oflags_host(long d) { int f = (int)(d & 3); if (d & 4) f |= O_NONBLOC
 static long oflags_darwin(int h) { long d = h & 3; if (h & O_NONBLOCK) d |= 4; if (h & O_APPEND) d |= 8; if (h & O_ASYNC) d |= 0x40; return d; }
 static short lock_type_host(short t) { return t == 1 ? F_RDLCK : t == 3 ? F_WRLCK : F_UNLCK; }      /* Darwin: RD 1, UN 2, WR 3 */
 static short lock_type_darwin(short t) { return t == F_RDLCK ? 1 : t == F_WRLCK ? 3 : 2; }
-ISIM_GUEST_ABI static int d_fcntl(int fd, int cmd, long arg) {
+#if defined(__aarch64__)
+/* fcntl/ioctl are variadic in Darwin's headers: their third argument is on the guest's stack (arm64), not in x2 */
+ISIM_ASM_CALLEE int d_fcntl_c(int fd, int cmd, long arg);
+__asm__(".text\n.globl d_fcntl\n.type d_fcntl,%function\nd_fcntl:\n  ldr x2, [sp]\n  b d_fcntl_c\n");
+#define d_fcntl d_fcntl_c
+ISIM_ASM_CALLEE int d_ioctl_c(int fd, unsigned long req, void *arg);
+__asm__(".text\n.globl d_ioctl\n.type d_ioctl,%function\nd_ioctl:\n  ldr x2, [sp]\n  b d_ioctl_c\n");
+#define d_ioctl d_ioctl_c
+#endif
+ISIM_ASM_CALLEE ISIM_GUEST_ABI static int d_fcntl(int fd, int cmd, long arg) {
     switch (cmd) {
     case 0: return NETRET(fcntl(fd, F_DUPFD, (int)arg));
     case 67: return NETRET(fcntl(fd, F_DUPFD_CLOEXEC, (int)arg));
@@ -335,7 +344,7 @@ ISIM_GUEST_ABI static int d_fcntl(int fd, int cmd, long arg) {
     default: errno = EINVAL; return -1;
     }
 }
-ISIM_GUEST_ABI static int d_ioctl(int fd, unsigned long req, void *arg) {
+ISIM_ASM_CALLEE ISIM_GUEST_ABI static int d_ioctl(int fd, unsigned long req, void *arg) {
     switch (req) {
     case 0x8004667eUL: return NETRET(ioctl(fd, FIONBIO, arg));      /* FIONBIO */
     case 0x4004667fUL: return NETRET(ioctl(fd, FIONREAD, arg));     /* FIONREAD */

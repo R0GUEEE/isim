@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install or update isim (Linux x86_64) from the GitHub releases.
+# Install or update isim (Linux x86_64 or arm64) from the GitHub releases.
 #
 #   curl -fsSL https://raw.githubusercontent.com/kolabs-dev/isim/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/kolabs-dev/isim/main/install.sh | bash -s -- 0.5.0   # a given version
@@ -24,7 +24,12 @@ want=${want#v}
 
 say() { printf 'isim install: %s\n' "$*" >&2; }
 die() { say "$*"; exit 1; }
-[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || die "isim releases are for Linux x86_64 (this is $(uname -s) $(uname -m))"
+[ "$(uname -s)" = Linux ] || die "isim releases are for Linux (this is $(uname -s))"
+case "$(uname -m)" in
+  x86_64|amd64) arch=linux-x86_64 ;;
+  aarch64|arm64) arch=linux-aarch64 ;;
+  *) die "isim releases are for Linux x86_64 and arm64 (this is $(uname -m))" ;;
+esac
 command -v curl >/dev/null || die "needs curl"
 command -v tar >/dev/null || die "needs tar"
 
@@ -32,7 +37,7 @@ if [ "$want" = latest ]; then
   want=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -1)
   [ -n "$want" ] || die "could not find the latest release of $REPO"
 fi
-name=isim-$want-linux-x86_64
+name=isim-$want-$arch
 dest=$ISIM_INSTALL_DIR/$want
 
 if [ -x "$dest/bin/isim" ]; then

@@ -1,4 +1,5 @@
-"""Packaging a release for Linux x86_64 (dist/isim-VERSION-linux-x86_64.tar.gz):
+"""Packaging a release for the host architecture (dist/isim-VERSION-linux-x86_64.tar.gz on x86-64,
+    dist/isim-VERSION-linux-aarch64.tar.gz on arm64):
   - the host runtime built in the release container (release/Dockerfile: glibc 2.35, SDL3 and HarfBuzz from source) with its shared
     libraries bundled in lib/ (rpath $ORIGIN/../lib); glibc and the graphics/audio drivers come from the host;
   - the iOS-simulator SDK, frameworks, Swift libraries and system apps from this tree's build (platform independent);
@@ -35,8 +36,9 @@ for l in $out/lib/*.so*; do patchelf --set-rpath "\$ORIGIN" "$l"; done
 
 
 def package(root, version, ctx):
+    from . import arch
     from .graph import TOOLS, host_sources
-    name = f"isim-{version}-linux-x86_64"
+    name = f"isim-{version}-{arch.tarball_arch()}"
     dist = os.path.join(root, "dist")
     stage = os.path.join(dist, name)
     if not os.path.exists(os.path.join(root, "out/sdk/Applications/Settings.app/Settings")):

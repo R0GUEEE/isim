@@ -13,22 +13,28 @@ a fixed size on a grey canvas; widgets: their entries rendered like the home scr
 import argparse
 import os
 import plistlib
+import platform
 import struct
 import subprocess
 import sys
 import tempfile
 
 
+CPU_TYPE_ARM64 = 0x0100000C
+CPU_TYPE_X86_64 = 0x01000007
+GUEST_CPU = CPU_TYPE_ARM64 if platform.machine().lower() in ("aarch64", "arm64") else CPU_TYPE_X86_64
+
+
 def symbols(path):
-    """The names of the symbols in a 64-bit Mach-O file (LC_SYMTAB), or of its x86_64 slice in a fat file."""
+    """The names of the symbols in a 64-bit Mach-O file (LC_SYMTAB), or of the host architecture's slice in a fat file."""
     data = open(path, "rb").read()
     off = 0
     magic = struct.unpack_from("<I", data, 0)[0]
-    if magic in (0xbebafeca, 0xcafebabe):                       # fat: the x86_64 slice
+    if magic in (0xbebafeca, 0xcafebabe):                       # fat: the host architecture's slice
         n = struct.unpack_from(">I", data, 4)[0]
         for i in range(n):
             cpu, _, o, _, _ = struct.unpack_from(">iiIII", data, 8 + i * 20)
-            if cpu == 0x01000007:
+            if cpu == GUEST_CPU:
                 off = o
     if struct.unpack_from("<I", data, off)[0] != 0xfeedfacf:
         sys.exit(f"isim preview: {path} is not a 64-bit Mach-O executable")

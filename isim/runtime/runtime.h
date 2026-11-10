@@ -1,15 +1,40 @@
 /* isim runtime: internal interfaces between loader, host libraries and ObjC runtime. */
 #pragma once
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "guest_abi.h"           /* ISIM_GUEST_ABI, ISIM_GUEST_CALLBACK */
+#include "hostarch.h"            /* the host CPU: signal context fields, crash-report names */
 
 /* Status labels for every host-provided symbol (see docs/COVERAGE.md):
- *   "passthrough" host glibc function; ABI-identical for its signature on x86_64
+ *   "passthrough" host glibc function; ABI-identical for its signature on the host (x86_64: SysV, arm64: AAPCS64
+ *                 with Darwin's variadic rule bridged in libsystem.c; long double is the one type that differs)
  *   "adapted"     wrapper translating Darwin layout/semantics/constants
  *   "isim"        isim-specific implementation (ObjC runtime, host graphics bridge)
  *   "stub"        placeholder that does NOT implement Darwin behaviour */
+#if defined(__aarch64__)
+/* The Darwin variadic bridge (arm64 only: x86-64 Darwin and Linux agree on va_list).
+ *
+ * Apple's arm64 ABI passes every variadic argument on the stack, one 8-byte slot each and in order — nothing in the
+ * registers — so at the entry of a variadic function sp points at the first of them. Linux's AAPCS64 va_list reads
+ * the register save area first and then that same stack array; a va_list whose register cursors are already exhausted
+ * (gr_offs and vr_offs 0) therefore reads Darwin's slots directly, in order, with no marshalling at all.
+ *
+ * A guest-facing variadic host function is then two pieces: a naked front end that copies sp into the next argument
+ * register and jumps to a C body (the "bodies" at the bottom of libsystem.c, libc_extras.inc and darwin_extras.inc),
+ * and the body, which rebuilds the va_list with this and calls the host's v-function. */
+/* a C body only hand-written assembly calls (the bridge's front ends): emitted even though no C code names it */
+#define ISIM_ASM_CALLEE __attribute__((used))
+typedef struct { void *stack, *gr_top, *vr_top; int gr_offs, vr_offs; } isim_aarch64_va_list;
+static inline void isim_va_from_darwin(va_list *ap, const void *stack) {
+    isim_aarch64_va_list v = { (void *)stack, (void *)stack, (void *)stack, 0, 0 };
+    _Static_assert(sizeof v == sizeof(va_list), "aarch64 va_list: five fields, 32 bytes");
+    memcpy(ap, &v, sizeof v);
+}
+#endif
+
 struct shim { const char *name; void *addr; const char *status; };
 
 /* host pseudo-libraries: install name -> symbol table */

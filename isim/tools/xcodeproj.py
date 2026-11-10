@@ -5,7 +5,12 @@ file references with group paths, target dependencies, and merged build settings
 (project config -> target config) with $(VAR) / ${VAR} expansion.
 """
 import os
+import platform
 import re
+
+# The guest architecture is the host's: isim executes the simulator SDK's Mach-O natively (buildlib/arch.py), so Xcode
+# build settings and conditionals that name an architecture must name this one.
+GUEST_ARCH = "arm64" if platform.machine().lower() in ("aarch64", "arm64") else "x86_64"
 
 
 class PBXParseError(Exception):
@@ -271,7 +276,7 @@ class Target:
             'PROJECT_FILE_PATH': self.p.xcodeproj,
             'SDKROOT': 'iphoneos', 'DEVELOPMENT_LANGUAGE': 'en',
             'PLATFORM_NAME': 'iphonesimulator', 'EFFECTIVE_PLATFORM_NAME': '-iphonesimulator',
-            'ARCHS': 'x86_64', 'CURRENT_ARCH': 'x86_64', 'NATIVE_ARCH': 'x86_64',
+            'ARCHS': GUEST_ARCH, 'CURRENT_ARCH': GUEST_ARCH, 'NATIVE_ARCH': GUEST_ARCH,
             'PRODUCT_TYPE': self.product_type,
         }
         base.update(defaults or {})
@@ -395,7 +400,7 @@ def _match_conditions(conds, configuration):
     for k, v in conds:
         if k == 'sdk' and not (fnmatch.fnmatch('iphonesimulator', v) or fnmatch.fnmatch('iphonesimulator17.0', v)):
             return False
-        if k == 'arch' and not fnmatch.fnmatch('x86_64', v):
+        if k == 'arch' and not fnmatch.fnmatch(GUEST_ARCH, v):
             return False
         if k == 'config' and not fnmatch.fnmatch(configuration, v):
             return False

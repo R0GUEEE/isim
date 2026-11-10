@@ -57,10 +57,19 @@ static int open_locks(int fd, int dflags) {
     int e = errno; close(fd); errno = e == EWOULDBLOCK ? EAGAIN : e;
     return -1;
 }
+#if defined(__aarch64__)
+/* open(path, flags, ...): the mode is variadic, so on arm64 it arrives in the guest's first stack slot, not in x2 */
+ISIM_ASM_CALLEE int d_open_c(const char *path, int dflags, int mode);
+__asm__(".text\n.globl d_open\n.type d_open,%function\nd_open:\n  ldr w2, [sp]\n  b d_open_c\n");
+#define d_open d_open_c
+ISIM_ASM_CALLEE int d_openat_c(int dirfd, const char *path, int dflags, int mode);
+__asm__(".text\n.globl d_openat\n.type d_openat,%function\nd_openat:\n  ldr w3, [sp]\n  b d_openat_c\n");
+#define d_openat d_openat_c
+#endif
 ISIM_GUEST_ABI static int d_open(const char *path, int dflags, int mode) { return open_locks(open(path, oflags_from_darwin(dflags), mode), dflags); }
 /* openat(2): Darwin's AT_FDCWD is -2 */
 static int dirfd_from_darwin(int dirfd) { return dirfd == -2 ? AT_FDCWD : dirfd; }
-ISIM_GUEST_ABI static int d_openat(int dirfd, const char *path, int dflags, int mode) {
+ISIM_ASM_CALLEE ISIM_GUEST_ABI static int d_openat(int dirfd, const char *path, int dflags, int mode) {
     return open_locks(openat(dirfd_from_darwin(dirfd), path, oflags_from_darwin(dflags), mode), dflags);
 }
 /* the *at() calls' Darwin AT_ flags */
@@ -417,11 +426,18 @@ extern __int128 __modti3(__int128, __int128);
 extern unsigned __int128 __udivti3(unsigned __int128, unsigned __int128);
 extern unsigned __int128 __umodti3(unsigned __int128, unsigned __int128);
 
-/* the half-precision conversions differ: Darwin x86_64 code passes and returns the _Float16 as a 16-bit integer (edi /
- * eax), libgcc in xmm0. Converted here, by the host compiler. */
+/* the half-precision conversions. On x86-64 Darwin passes and returns the _Float16 as a 16-bit integer (edi / eax)
+ * where libgcc uses xmm0, so the arguments are marshalled here by the host compiler. arm64 passes _Float16 in a vector
+ * register on both sides (AAPCS64), so the plain compiler-rt signatures are the ABI and nothing is marshalled. */
+#if defined(__aarch64__)
+ISIM_GUEST_ABI static float d_extendhfsf2(_Float16 h) { return (float)h; }
+ISIM_GUEST_ABI static _Float16 d_truncsfhf2(float f) { return (_Float16)f; }
+ISIM_GUEST_ABI static _Float16 d_truncdfhf2(double d) { return (_Float16)d; }
+#else
 ISIM_GUEST_ABI static float d_extendhfsf2(uint16_t h) { _Float16 x; memcpy(&x, &h, 2); return (float)x; }
 ISIM_GUEST_ABI static uint16_t d_truncsfhf2(float f) { _Float16 x = (_Float16)f; uint16_t h; memcpy(&h, &x, 2); return h; }
 ISIM_GUEST_ABI static uint16_t d_truncdfhf2(double d) { _Float16 x = (_Float16)d; uint16_t h; memcpy(&h, &x, 2); return h; }
+#endif
 
 static char *d_progname = "app";
 
@@ -505,6 +521,61 @@ void libsystem_init(int argc, char **argv) {
     rune_init();
 }
 
+/* ---- the varargs bridge (arm64; runtime.h, isim_va_from_darwin) ----
+ * The printf/scanf families are passthroughs on x86-64, where Darwin and Linux share the variadic convention. On
+ * arm64 they are not: Darwin passes every variadic argument on the stack, Linux expects the first ones in registers.
+ * Each variadic entry point is a three-instruction front end that hands the guest's stack pointer to a body, and the
+ * body rebuilds a Linux va_list that reads that stack exactly (isim_va_from_darwin). The v* entry points need no
+ * front end: their va_list argument is Darwin's pointer, and the body turns it into a Linux va_list the same way. */
+#if defined(__aarch64__)
+#define V(n) A("_" #n, d_##n)
+#define L(n) A("_" #n, d_##n)
+ISIM_ASM_CALLEE int d_printf_v(const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vprintf(f, ap); }
+__asm__(".text\n"
+        ".globl d_printf\n.type d_printf,%function\nd_printf:\n  mov x1, sp\n  b d_printf_v\n");
+ISIM_ASM_CALLEE int d_fprintf_v(FILE *fp, const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vfprintf(fp, f, ap); }
+__asm__(".text\n"
+        ".globl d_fprintf\n.type d_fprintf,%function\nd_fprintf:\n  mov x2, sp\n  b d_fprintf_v\n");
+ISIM_ASM_CALLEE int d_snprintf_v(char *b, size_t n, const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vsnprintf(b, n, f, ap); }
+__asm__(".text\n"
+        ".globl d_snprintf\n.type d_snprintf,%function\nd_snprintf:\n  mov x3, sp\n  b d_snprintf_v\n"
+        ".globl d_vsnprintf\n.type d_vsnprintf,%function\nd_vsnprintf:\n  b d_vsnprintf_c\n");
+ISIM_ASM_CALLEE int d_sprintf_v(char *b, const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vsprintf(b, f, ap); }
+__asm__(".text\n"
+        ".globl d_sprintf\n.type d_sprintf,%function\nd_sprintf:\n  mov x2, sp\n  b d_sprintf_v\n"
+        ".globl d_vsprintf\n.type d_vsprintf,%function\nd_vsprintf:\n  b d_vsprintf_c\n");
+ISIM_ASM_CALLEE int d_asprintf_v(char **o, const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vasprintf(o, f, ap); }
+__asm__(".text\n"
+        ".globl d_asprintf\n.type d_asprintf,%function\nd_asprintf:\n  mov x2, sp\n  b d_asprintf_v\n"
+        ".globl d_vasprintf\n.type d_vasprintf,%function\nd_vasprintf:\n  b d_vasprintf_c\n");
+ISIM_ASM_CALLEE int d_sscanf_v(const char *s, const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vsscanf(s, f, ap); }
+__asm__(".text\n"
+        ".globl d_sscanf\n.type d_sscanf,%function\nd_sscanf:\n  mov x2, sp\n  b d_sscanf_v\n"
+        ".globl d_vsscanf\n.type d_vsscanf,%function\nd_vsscanf:\n  b d_vsscanf_c\n");
+ISIM_ASM_CALLEE int d_scanf_v(const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vscanf(f, ap); }
+__asm__(".text\n"
+        ".globl d_scanf\n.type d_scanf,%function\nd_scanf:\n  mov x1, sp\n  b d_scanf_v\n"
+        ".globl d_vscanf\n.type d_vscanf,%function\nd_vscanf:\n  b d_vscanf_c\n");
+ISIM_ASM_CALLEE int d_fscanf_v(FILE *fp, const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vfscanf(fp, f, ap); }
+__asm__(".text\n"
+        ".globl d_fscanf\n.type d_fscanf,%function\nd_fscanf:\n  mov x2, sp\n  b d_fscanf_v\n"
+        ".globl d_vfscanf\n.type d_vfscanf,%function\nd_vfscanf:\n  b d_vfscanf_c\n"
+        ".globl d_vprintf\n.type d_vprintf,%function\nd_vprintf:\n  b d_vprintf_c\n"
+        ".globl d_vfprintf\n.type d_vfprintf,%function\nd_vfprintf:\n  b d_vfprintf_c\n");
+/* the v* functions: Darwin's va_list (the pointer the guest passes) to a Linux va_list */
+ISIM_ASM_CALLEE int d_vprintf_c(const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vprintf(f, l); }
+ISIM_ASM_CALLEE int d_vfprintf_c(FILE *fp, const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vfprintf(fp, f, l); }
+ISIM_ASM_CALLEE int d_vsnprintf_c(char *b, size_t n, const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vsnprintf(b, n, f, l); }
+ISIM_ASM_CALLEE int d_vsprintf_c(char *b, const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vsprintf(b, f, l); }
+ISIM_ASM_CALLEE int d_vasprintf_c(char **o, const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vasprintf(o, f, l); }
+ISIM_ASM_CALLEE int d_vsscanf_c(const char *s, const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vsscanf(s, f, l); }
+ISIM_ASM_CALLEE int d_vscanf_c(const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vscanf(f, l); }
+ISIM_ASM_CALLEE int d_vfscanf_c(FILE *fp, const char *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vfscanf(fp, f, l); }
+#else
+#define V(n) P(n)
+#define L(n) P(n)
+#endif
+
 extern int __cxa_atexit(void (*f)(void *), void *arg, void *dso);
 #define P(n) { "_" #n, (void *)n, "passthrough" }
 #define A(n, f) { n, (void *)f, "adapted" }
@@ -518,8 +589,8 @@ static const struct shim libsystem_table[] = {
     P(atoi), P(atol), P(atof), P(abs), P(labs), P(llabs), P(qsort), P(bsearch), A("_bzero", d_bzero),
     P(tolower), P(toupper), P(isalpha), P(isdigit), P(isalnum), P(isspace), P(isupper), P(islower), P(isxdigit), P(ispunct), P(isprint),
     /* stdio (FILE* is opaque to guests) */
-    P(asprintf), P(vasprintf), P(flockfile), P(funlockfile), P(getc_unlocked), P(getline), P(getdelim),
-    P(printf), P(fprintf), P(vprintf), P(vfprintf), P(snprintf), P(vsnprintf), P(sprintf), P(vsprintf), P(sscanf),
+    V(asprintf), L(vasprintf), P(flockfile), P(funlockfile), P(getc_unlocked), P(getline), P(getdelim),
+    V(printf), V(fprintf), L(vprintf), L(vfprintf), V(snprintf), L(vsnprintf), V(sprintf), L(vsprintf), V(sscanf),
     P(puts), P(fputs), P(fputc), P(putchar), P(fwrite), P(fread), P(fflush), P(fopen), P(fclose), P(fgets), P(fseek), P(ftell), P(perror),
     A("___stdinp", &d_stdinp), A("___stdoutp", &d_stdoutp), A("___stderrp", &d_stderrp),
     /* process & environment */
@@ -713,7 +784,7 @@ static const struct shim libsystem_table[] = {
     /* more C11 / POSIX */
     P(rand), P(srand), P(random), P(srandom), P(div), P(ldiv), P(lldiv), P(strtold), P(atoll), P(aligned_alloc),
     P(_Exit), P(quick_exit), P(at_quick_exit), A("_unsetenv", d_unsetenv), P(mblen), P(realpath), A("___mb_cur_max", &mb_cur_max_value),
-    S("_system", d_system), P(scanf), P(fscanf), P(vscanf), P(vfscanf), P(vsscanf), P(getc), P(getchar), P(fgetc), P(putc), P(ungetc),
+    S("_system", d_system), V(scanf), V(fscanf), L(vscanf), L(vfscanf), L(vsscanf), P(getc), P(getchar), P(fgetc), P(putc), P(ungetc),
     P(freopen), P(fdopen), P(fileno), P(setbuf), P(setvbuf), P(remove), P(rename), P(tmpfile), P(rewind), P(fgetpos), P(fsetpos),
     P(clearerr), P(feof), P(ferror), P(strcoll), P(strxfrm), P(strpbrk), P(strspn), P(strcspn), P(strtok), P(strtok_r),
     P(strerror), A("_strerror_r", d_strerror_r), A("_strlcpy", d_strlcpy), A("_strlcat", d_strlcat), P(clock), P(difftime), P(asctime), P(ctime),

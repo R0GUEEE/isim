@@ -12,6 +12,8 @@ import shutil
 import subprocess
 import sys
 
+from . import arch
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "out")
 SDK = os.path.join(OUT, "sdk")
@@ -103,7 +105,7 @@ class A:
         name = name or self.name
         b = self.bundle(name)
         clang = os.environ.get("CLANG", "clang")
-        self.run(clang, f"-target", f"x86_64-apple-ios{minos}-simulator", "-isysroot", SDK, "-fuse-ld=lld", "-fobjc-arc", *C_WERROR, *flags,
+        self.run(clang, f"-target", arch.triple(minos), "-isysroot", SDK, "-fuse-ld=lld", "-fobjc-arc", *C_WERROR, *flags,
                  *[os.path.join(self.d, s) for s in srcs], *link, "-o", os.path.join(b, name))
         shutil.copy(os.path.join(self.d, plist), b)
         return b
@@ -360,7 +362,7 @@ def _(a):
     a.copy("request.cbor", f"{b}/request.cbor")
     os.makedirs(f"{b}/PlugIns", exist_ok=True)      # issue #744: the provider extension (iOS 26)
     a.swift_app("HelloIDDocsProvider", ["Provider/Provider.swift"], "Provider/Info.plist", ext=".appex", into=f"{b}/PlugIns",
-                swift_flags=["-target", "x86_64-apple-ios26.0-simulator"], link=["-framework", "UIKit"])
+                swift_flags=["-target", arch.triple("26.0")], link=["-framework", "UIKit"])
 
 
 @app("samples/HelloVault")   # issue #400: a credential provider, an SSO extension and an account modification extension
@@ -534,7 +536,7 @@ def _(a):   # managed asset packs (iOS 26): the managed downloader extension tar
     b = a.swift_app(srcs=["HelloAssetPacks.swift"])
     os.makedirs(f"{b}/PlugIns", exist_ok=True)
     x = a.swift_app("HelloAssetPacksDownloader", ["Downloader/Downloader.swift"], "Downloader/Info.plist", ext=".appex", into=f"{b}/PlugIns",
-                    swift_flags=["-target", "x86_64-apple-ios26.0-simulator"], link=["-framework", "UIKit"])
+                    swift_flags=["-target", arch.triple("26.0")], link=["-framework", "UIKit"])
     for d in (b, x):
         a.copy("HelloAssetPacks.entitlements", f"{d}/archived-expanded-entitlements.xcent")
 
@@ -928,9 +930,9 @@ XCFRAMEWORK_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 	<array>
 		<dict>
 			<key>HeadersPath</key><string>Headers</string>
-			<key>LibraryIdentifier</key><string>ios-x86_64-simulator</string>
+			<key>LibraryIdentifier</key><string>{XCF_PLATFORM}</string>
 			<key>LibraryPath</key><string>libSum.a</string>
-			<key>SupportedArchitectures</key><array><string>x86_64</string></array>
+			<key>SupportedArchitectures</key><array><string>{arch.GUEST}</string></array>
 			<key>SupportedPlatform</key><string>ios</string>
 			<key>SupportedPlatformVariant</key><string>simulator</string>
 		</dict>
@@ -943,8 +945,9 @@ XCFRAMEWORK_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 XCF = "samples/HelloToolchain/Vendor/Sum.xcframework"
-XCF_FILES = ["Info.plist", "ios-x86_64-simulator/libSum.a", "ios-x86_64-simulator/Headers/sum.h",
-             "ios-x86_64-simulator/Headers/module.modulemap"]
+XCF_PLATFORM = arch.platform_triple()
+XCF_FILES = ["Info.plist", f"{XCF_PLATFORM}/libSum.a", f"{XCF_PLATFORM}/Headers/sum.h",
+             f"{XCF_PLATFORM}/Headers/module.modulemap"]
 
 
 def sum_xcframework():
@@ -954,7 +957,7 @@ def sum_xcframework():
     a = A("samples/HelloToolchain", "apps")
     work = os.path.join(OUT, "projects", "HelloToolchain")
     xcf = os.path.join(ROOT, XCF)
-    sl = os.path.join(xcf, "ios-x86_64-simulator")
+    sl = os.path.join(xcf, XCF_PLATFORM)
     os.makedirs(os.path.join(sl, "Headers"), exist_ok=True)
     os.makedirs(os.path.join(work, "vendor"), exist_ok=True)
     a.cc("-c", "Vendor/Sum/sum.c", "-o", f"{work}/vendor/sum.o")
@@ -964,7 +967,7 @@ def sum_xcframework():
     for f in ("sum.h", "module.modulemap"):
         shutil.copy(os.path.join(a.d, "Vendor", "Sum", f), os.path.join(sl, "Headers"))
     with open(os.path.join(xcf, "Info.plist"), "w") as f:
-        f.write(XCFRAMEWORK_PLIST)
+        f.write(XCFRAMEWORK_PLIST.format(XCF_PLATFORM=XCF_PLATFORM))
 
 
 @app("samples/HelloToolchain", extra_inputs=[f"{XCF}/{f}" for f in XCF_FILES])
@@ -1186,8 +1189,8 @@ def _(a):
 
 @app("tests/swift-extras", products=["SwiftExtrasTest.app"])
 def _(a):   # deployment target iOS 18 (Synchronization is iOS 18+)
-    a.swift_app("SwiftExtrasTest", swift_flags=["-target", "x86_64-apple-ios18.0-simulator"],
-                link=["-target", "x86_64-apple-ios18.0-simulator", "-framework", "Foundation"])
+    a.swift_app("SwiftExtrasTest", swift_flags=["-target", arch.triple("18.0")],
+                link=["-target", arch.triple("18.0"), "-framework", "Foundation"])
 
 
 @app("tests/games-objc", products=["GamesObjCTest.app"])   # after the overlays: the frameworks re-export CoreHaptics and GameController (issue #548)
@@ -1468,7 +1471,7 @@ def _(a):
 
 
 @app("tests/swift-embedded", products=["SwiftEmbeddedTest.app"],
-     extra_inputs=["out/swift/embedded/Swift.swiftmodule/x86_64-apple-ios-simulator.swiftmodule", "out/swift/libswiftEmbeddedSupport.a"])
+     extra_inputs=[f"out/swift/embedded/Swift.swiftmodule/{arch.module_triple()}.swiftmodule", "out/swift/libswiftEmbeddedSupport.a"])
 def _(a):
     b = a.bundle("SwiftEmbeddedTest")
     obj = os.path.join(OUT, "swift", "emb-test.o")

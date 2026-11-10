@@ -259,7 +259,11 @@ IMP objc_rt_lookup(id self, Class cls, SEL sel) { return lookup_or_forward(self,
 IMP objc_rt_lookup_stret(id self, Class cls, SEL sel) { return lookup_or_forward(self, cls, sel, 1); }
 
 /* frame layout shared with Foundation (isim_objc_frame in <objc/isim_internal.h>) */
+#if defined(__aarch64__)
+enum { FWD_STRET_SLOT = 0xd0 / 8 };      /* isim_objc_frame (arm64): the stret slot after stack and x8 */
+#else
 enum { FWD_STRET_SLOT = 0xf0 / 8 };
+#endif
 typedef id (*fwd_handler_fn)(id self, SEL sel, uint64_t *frame);
 static fwd_handler_fn fwd_handler;
 void isim_objc_set_forward_handler(fwd_handler_fn h) { fwd_handler = h; }
@@ -278,6 +282,84 @@ id objc_forward_dispatch(uint64_t *frame) {
     abort();
 }
 
+/* ---------------- the objc entry points (hand-written assembly) ----------------
+ * Both blocks implement the same four contracts for their architecture:
+ *   rt_msgSend(self, _cmd, ...)            look the IMP up and tail-call it with the arguments untouched
+ *   rt_msgSendSuper{,2}(struct objc_super *, _cmd, ...)   the same, starting at the superclass
+ *   rt_msgForward(_stret)                  save the argument registers into an isim_objc_frame, ask
+ *                                          objc_forward_dispatch (Foundation: forwardingTarget, NSInvocation,
+ *                                          doesNotRecognizeSelector), then either re-send to the receiver it
+ *                                          returned or return the frame's return registers
+ *   isim_objc_call_frame(isim_objc_call *) call c->fn with the given registers and stack words (NSInvocation)
+ *
+ * arm64: Apple's ABI has 8 integer and 8 vector argument registers (x0-x7, q0-q7) and x8 for a result returned
+ * through memory; the guest's stack arguments stay where the caller put them, so a tail call needs no marshalling
+ * at all. There is no _stret entry point on arm64 (a large result is x8 everywhere): the two _stret symbols are
+ * aliases of the normal ones, so a binary that names them still links and runs.
+ */
+#if defined(__aarch64__)
+/* the frame isim_objc_frame (arm64) occupies, plus x29/x30 for the forwarder itself */
+#define SAVE_ARGS \
+    "  sub sp, sp, #0x150\n" \
+    "  stp x29, x30, [sp, #0x140]\n" \
+    "  stp x0, x1, [sp, #0x00]\n  stp x2, x3, [sp, #0x10]\n  stp x4, x5, [sp, #0x20]\n  stp x6, x7, [sp, #0x30]\n" \
+    "  stp q0, q1, [sp, #0x40]\n  stp q2, q3, [sp, #0x60]\n  stp q4, q5, [sp, #0x80]\n  stp q6, q7, [sp, #0xa0]\n" \
+    "  add x9, sp, #0x150\n  str x9, [sp, #0xc0]\n" \
+    "  str x8, [sp, #0xc8]\n"
+#define RESTORE_AND_JUMP \
+    "  mov x9, x0\n" \
+    "  ldp x0, x1, [sp, #0x00]\n  ldp x2, x3, [sp, #0x10]\n  ldp x4, x5, [sp, #0x20]\n  ldp x6, x7, [sp, #0x30]\n" \
+    "  ldp q0, q1, [sp, #0x40]\n  ldp q2, q3, [sp, #0x60]\n  ldp q4, q5, [sp, #0x80]\n  ldp q6, q7, [sp, #0xa0]\n" \
+    "  ldr x8, [sp, #0xc8]\n  ldp x29, x30, [sp, #0x140]\n  add sp, sp, #0x150\n  br x9\n"
+#define RETURN_ZERO \
+    "  mov x0, #0\n  mov x1, #0\n  movi v0.16b, #0\n  movi v1.16b, #0\n  ret\n"
+#define FORWARD(name, resend, stret) \
+    ".globl " name "\n.type " name ",@function\n" name ":\n" SAVE_ARGS \
+    "  mov x9, #" stret "\n  str x9, [sp, #0xd0]\n" \
+    "  mov x0, sp\n  bl objc_forward_dispatch\n  cbnz x0, 7f\n" \
+    "  ldp x0, x1, [sp, #0xd8]\n  ldp x2, x3, [sp, #0xe8]\n" \
+    "  ldp q0, q1, [sp, #0x100]\n  ldp q2, q3, [sp, #0x120]\n" \
+    "  ldp x29, x30, [sp, #0x140]\n  add sp, sp, #0x150\n  ret\n" \
+    "7:\n  str x0, [sp, #0x00]\n" RESTORE_AND_JUMP
+
+__asm__(
+    ".text\n"
+    /* id objc_msgSend(id self, SEL op, ...) */
+    ".globl rt_msgSend\n.type rt_msgSend,@function\nrt_msgSend:\n"
+    "  cbz x0, 9f\n" SAVE_ARGS
+    "  mov x2, x1\n  ldr x1, [x0]\n  bl objc_rt_lookup\n" RESTORE_AND_JUMP
+    "9:\n" RETURN_ZERO
+    /* id objc_msgSendSuper2(struct objc_super *{receiver, current_class}, SEL, ...) */
+    ".globl rt_msgSendSuper2\n.type rt_msgSendSuper2,@function\nrt_msgSendSuper2:\n" SAVE_ARGS
+    "  mov x2, x1\n  ldr x9, [x0]\n  str x9, [sp, #0x00]\n"
+    "  ldr x10, [x0, #8]\n  ldr x1, [x10, #8]\n  mov x0, x9\n  bl objc_rt_lookup\n" RESTORE_AND_JUMP
+    /* id objc_msgSendSuper(struct objc_super *{receiver, class}, SEL, ...) */
+    ".globl rt_msgSendSuper\n.type rt_msgSendSuper,@function\nrt_msgSendSuper:\n" SAVE_ARGS
+    "  mov x2, x1\n  ldr x9, [x0]\n  str x9, [sp, #0x00]\n"
+    "  ldr x1, [x0, #8]\n  mov x0, x9\n  bl objc_rt_lookup\n" RESTORE_AND_JUMP
+    /* arm64 has no _stret entry points (a result too large for the registers comes back through x8): the names
+       exist for binaries that mention them, and do what the normal entry point does */
+    ".globl rt_msgSend_stret\n.set rt_msgSend_stret, rt_msgSend\n"
+    ".globl rt_msgSendSuper2_stret\n.set rt_msgSendSuper2_stret, rt_msgSendSuper2\n"
+    FORWARD("rt_msgForward", "rt_msgSend", "0")
+    ".globl rt_msgForward_stret\n.set rt_msgForward_stret, rt_msgForward\n"
+    /* void isim_objc_call_frame(isim_objc_call *c): call c->fn with c's registers and stack words, store what it
+       returns in c */
+    ".globl isim_objc_call_frame\n.type isim_objc_call_frame,@function\nisim_objc_call_frame:\n"
+    "  stp x29, x30, [sp, #-32]!\n  str x19, [sp, #16]\n  mov x19, x0\n"
+    "  ldr x9, [x19, #0xd8]\n"                                  /* nstack */
+    "  lsl x9, x9, #3\n  add x9, x9, #15\n  and x9, x9, #0xfffffffffffffff0\n  sub sp, sp, x9\n"
+    "  cbz x9, 3f\n"
+    "2:\n  subs x9, x9, #8\n  ldr x10, [x19, #0xd0]\n  add x10, x10, x9\n  ldr x10, [x10]\n"
+    "  add x11, sp, x9\n  str x10, [x11]\n  cbnz x9, 2b\n"
+    "3:\n  ldr x8, [x19, #0xe8]\n"
+    "  ldp x0, x1, [x19, #0x08]\n  ldp x2, x3, [x19, #0x18]\n  ldp x4, x5, [x19, #0x28]\n  ldp x6, x7, [x19, #0x38]\n"
+    "  ldp q0, q1, [x19, #0x50]\n  ldp q2, q3, [x19, #0x70]\n  ldp q4, q5, [x19, #0x90]\n  ldp q6, q7, [x19, #0xb0]\n"
+    "  ldr x9, [x19, #0x00]\n  blr x9\n"
+    "  stp x0, x1, [x19, #0xf0]\n  stp x2, x3, [x19, #0x100]\n"
+    "  stp q0, q1, [x19, #0x110]\n  stp q2, q3, [x19, #0x130]\n"
+    "  mov sp, x29\n  ldr x19, [sp, #16]\n  ldp x29, x30, [sp], #32\n  ret\n");
+#else
 #define SAVE_ARGS \
     "  push %rbp\n  .cfi_def_cfa_offset 16\n  .cfi_offset %rbp, -16\n  mov %rsp, %rbp\n  .cfi_def_cfa_register %rbp\n  sub $0xc0, %rsp\n" \
     "  movdqa %xmm0, 0x00(%rsp)\n  movdqa %xmm1, 0x10(%rsp)\n  movdqa %xmm2, 0x20(%rsp)\n  movdqa %xmm3, 0x30(%rsp)\n" \
@@ -351,8 +433,8 @@ __asm__(
     "  mov 0x10(%rbx), %rsi\n  mov 0x18(%rbx), %rdx\n  mov 0x20(%rbx), %rcx\n  mov 0x28(%rbx), %r8\n  mov 0x30(%rbx), %r9\n"
     "  mov 0x08(%rbx), %rdi\n  mov 0xc8(%rbx), %rax\n  call *0x00(%rbx)\n"
     "  mov %rax, 0xd0(%rbx)\n  mov %rdx, 0xd8(%rbx)\n  movdqu %xmm0, 0xe0(%rbx)\n  movdqu %xmm1, 0xf0(%rbx)\n"
-    "  lea -16(%rbp), %rsp\n  pop %r12\n  pop %rbx\n  pop %rbp\n  .cfi_def_cfa %rsp, 8\n  ret\n  .cfi_endproc\n"
-);
+    "  lea -16(%rbp), %rsp\n  pop %r12\n  pop %rbx\n  pop %rbp\n  .cfi_def_cfa %rsp, 8\n  ret\n  .cfi_endproc\n");
+#endif
 ISIM_GUEST_ABI void rt_msgSend(void); void rt_msgSendSuper2(void); void rt_msgSendSuper(void);
 ISIM_GUEST_ABI void rt_msgSend_stret(void); void rt_msgSendSuper2_stret(void); void isim_objc_call_frame(void *c);
 

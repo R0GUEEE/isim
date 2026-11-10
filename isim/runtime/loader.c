@@ -1,5 +1,5 @@
 /*
- * isim loader: loads an x86_64 iOS-Simulator Mach-O executable and its dylib
+ * isim loader: loads a host-architecture iOS-Simulator Mach-O executable and its dylib
  * dependencies on Linux, applies fixups, registers Objective-C metadata, runs
  * initializers and calls main().
  *
@@ -133,10 +133,18 @@ static void *make_trap(const char *name) {
         used = 0;
     }
     uint8_t *p = page + used; used += 32;
-    p[0] = 0x48; p[1] = 0xBF; memcpy(p + 2, &name, 8);                 /* movabs rdi, name */
     void *fn = (void *)unresolved_called;
+#if defined(__aarch64__)
+    /* ldr x0, #16; ldr x9, #16; br x9; nop; .quad name; .quad unresolved_called */
+    const uint32_t ldr_x0 = 0x58000080u, ldr_x9 = 0x580000A9u, br_x9 = 0xD61F0120u, nop = 0xD503201Fu;
+    memcpy(p + 0, &ldr_x0, 4); memcpy(p + 4, &ldr_x9, 4); memcpy(p + 8, &br_x9, 4); memcpy(p + 12, &nop, 4);
+    memcpy(p + 16, &name, 8); memcpy(p + 24, &fn, 8);
+    __builtin___clear_cache((char *)p, (char *)p + 32);                /* the page is written, then executed */
+#else
+    p[0] = 0x48; p[1] = 0xBF; memcpy(p + 2, &name, 8);                 /* movabs rdi, name */
     p[10] = 0x48; p[11] = 0xB8; memcpy(p + 12, &fn, 8);                /* movabs rax, fn */
     p[20] = 0xFF; p[21] = 0xE0;                                        /* jmp rax */
+#endif
     return p;
 }
 
@@ -450,8 +458,9 @@ static struct image *map_image(const char *path, int want_type) {
     im->mh = (const void *)im->file;
     if (im->file_size < sizeof *im->mh || im->mh->magic != MH_MAGIC_64)
         isim_fatal("%s: not a thin 64-bit Mach-O (fat files unsupported)", path);
-    if (im->mh->cputype != CPU_TYPE_X86_64)
-        isim_fatal("%s: not x86_64 (arm64 device binaries are not runnable here)", path);
+    if (im->mh->cputype != CPU_TYPE_HOST)
+        isim_fatal("%s: not " ISIM_ARCH_NAME " (this host runs " ISIM_ARCH_NAME " simulator code only: device binaries and "
+                    "the other simulator architecture are not runnable)", path);
     if (want_type == 0 && (im->mh->filetype == MH_EXECUTE || im->mh->filetype == MH_DYLIB || im->mh->filetype == 8 /* MH_BUNDLE */)) { /* dlopen */ }
     else if (im->mh->filetype != (uint32_t)want_type)
         isim_fatal("%s: unexpected Mach-O filetype %u", path, im->mh->filetype);
@@ -993,7 +1002,7 @@ static void dump_frame(char *buf, size_t cap, int i, uintptr_t pc) {
    unwinding here: the unwinder takes the dynamic loader's lock, which the interrupted thread may hold (a hang inside
    dlopen would never end). Memory is read through the pipe (safe_word) when `safe` */
 static int collect_pcs(ucontext_t *uc, uintptr_t *pcs, int max, int safe) {
-    uintptr_t pc = uc->uc_mcontext.gregs[REG_RIP], fp = uc->uc_mcontext.gregs[REG_RBP], sp = uc->uc_mcontext.gregs[REG_RSP], w;
+    uintptr_t pc = ISIM_UC_PC(uc), fp = ISIM_UC_FP(uc), sp = ISIM_UC_SP(uc), w;
     int n = 0;
     pcs[n++] = pc;
     #define READW(a, o) (safe ? safe_word((a), (o)) : ((a) && !((a) & 7) ? (*(o) = *(uintptr_t *)(a), 1) : 0))
@@ -1013,12 +1022,12 @@ static int collect_pcs(ucontext_t *uc, uintptr_t *pcs, int max, int safe) {
    frame, which also covers the guest frames above it (their images are registered with the unwinder); the chain
    when that finds nothing. The return addresses stay as they are (the .ips format and `isim crashlog` expect them). */
 static int crash_pcs(ucontext_t *uc, uintptr_t *pcs, int max) {
-    uintptr_t pc = uc->uc_mcontext.gregs[REG_RIP];
+    uintptr_t pc = ISIM_UC_PC(uc);
     if (!image_for_address((void *)pc)) {
         struct dump_pcs d = { .n = 0 };
         isim_unwind_backtrace(dump_collect, &d);
         int first = -1;
-        for (int i = 0; i < d.n; i++) if (d.pc[i] == pc || d.pc[i] == pc + 1) { first = i; break; }
+        for (int i = 0; i < d.n; i++) if (d.pc[i] == pc || d.pc[i] == ISIM_IP_AT_CALL_SITE(pc)) { first = i; break; }
         if (first >= 0 && d.n - first > 1) {
             int n = 0;
             pcs[n++] = pc;
@@ -1045,13 +1054,13 @@ static void dump_handler(int sig, siginfo_t *si, void *ctx) {
     int fd = open(path, O_RDONLY);
     if (fd >= 0) { ssize_t n = read(fd, name, sizeof name - 1); name[n > 0 ? n : 0] = 0; if (n > 0 && name[n - 1] == '\n') name[n - 1] = 0; close(fd); }
     len += snprintf(out + len, sizeof out - len, "isim: thread %d (%s)%s\n", tid, name, tid == getpid() ? " [main]" : "");
-    uintptr_t pc = uc->uc_mcontext.gregs[REG_RIP], fp = uc->uc_mcontext.gregs[REG_RBP], sp = uc->uc_mcontext.gregs[REG_RSP], w;
+    uintptr_t pc = ISIM_UC_PC(uc), fp = ISIM_UC_FP(uc), sp = ISIM_UC_SP(uc), w;
     /* DWARF unwind through the signal frame (host libraries have no frame pointers; guest images are registered);
        the frames up to and including the signal trampoline are this handler's own */
     struct dump_pcs d = { .n = 0 };
     isim_unwind_backtrace(dump_collect, &d);
     int first = -1;
-    for (int i = 0; i < d.n; i++) if (d.pc[i] == pc || d.pc[i] == pc + 1) { first = i; break; }
+    for (int i = 0; i < d.n; i++) if (d.pc[i] == pc || d.pc[i] == ISIM_IP_AT_CALL_SITE(pc)) { first = i; break; }
     if (first >= 0 && d.n - first > 2) {
         for (int i = first; i < d.n && len < sizeof out - 256; i++) {
             dump_frame(out + len, sizeof out - len, i - first, i == first ? pc : d.pc[i] - 1); len += strlen(out + len);
@@ -1264,7 +1273,7 @@ static void write_crash_report(int sig, siginfo_t *si, ucontext_t *uc, const uin
     put("{\n  \"uptime\" : %.0f,\n  \"procRole\" : \"Foreground\",\n  \"version\" : 2,\n  \"userID\" : %d,\n",
         tv.tv_sec + tv.tv_usec / 1e6 - isim_diag_process_start(), (int)getuid());
     put("  \"modelCode\" : "); put_str(getenv("ISIM_DEVICE") ? getenv("ISIM_DEVICE") : "iphone16pro");
-    put(",\n  \"captureTime\" : \"%s.%04ld %s\",\n  \"incident\" : \"%s\",\n  \"pid\" : %d,\n  \"cpuType\" : \"X86-64\",\n",
+    put(",\n  \"captureTime\" : \"%s.%04ld %s\",\n  \"incident\" : \"%s\",\n  \"pid\" : %d,\n  \"cpuType\" : \"" ISIM_CPU_TYPE_NAME "\",\n",
         when, (long)(tv.tv_usec / 100), tz, incident, getpid());
     put("  \"procName\" : "); put_str(proc); put(",\n  \"procPath\" : "); put_str(exe ? exe : "");
     put(",\n  \"bundleInfo\" : {\"CFBundleShortVersionString\":"); put_str(version); put(",\"CFBundleVersion\":"); put_str(build);
@@ -1292,7 +1301,7 @@ static void write_crash_report(int sig, siginfo_t *si, ucontext_t *uc, const uin
     for (int k = 0; k < nimages; k++) {
         char uuid[40]; image_uuid(images[k], uuid);
         const char *b = strrchr(images[k]->path, '/');
-        put("%s\n    {\"source\":\"P\",\"arch\":\"x86_64\",\"base\":%llu,\"size\":%llu,\"uuid\":\"%s\",\"path\":", k ? "," : "",
+        put("%s\n    {\"source\":\"P\",\"arch\":\"" ISIM_ARCH_NAME "\",\"base\":%llu,\"size\":%llu,\"uuid\":\"%s\",\"path\":", k ? "," : "",
             (unsigned long long)(uintptr_t)images[k]->base, (unsigned long long)images[k]->span, uuid);
         put_str(images[k]->path); put(",\"name\":"); put_str(b ? b + 1 : images[k]->path); put("}");
     }

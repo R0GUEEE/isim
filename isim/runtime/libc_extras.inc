@@ -438,6 +438,9 @@ ISIM_GUEST_ABI static void d_openlog(const char *ident, int opts, int facility) 
 }
 ISIM_GUEST_ABI static void d_closelog(void) { syslog_ident[0] = 0; syslog_opts = 0; }
 ISIM_GUEST_ABI static int d_setlogmask(int mask) { int old = syslog_mask; if (mask) syslog_mask = mask; return old; }
+#if defined(__aarch64__)
+#define d_vsyslog d_vsyslog_impl     /* the arm64 front end below owns the guest-facing name */
+#endif
 ISIM_GUEST_ABI static void d_vsyslog(int pri, const char *fmt, va_list ap) {
     if (!(syslog_mask & (1 << (pri & 7)))) return;
     int saved = errno;
@@ -457,7 +460,37 @@ ISIM_GUEST_ABI static void d_vsyslog(int pri, const char *fmt, va_list ap) {
         else fprintf(stderr, "%s%s%s\n", syslog_ident, syslog_ident[0] ? ": " : "", msg);
     }
 }
+#if defined(__aarch64__)
+/* arm64: syslog is variadic (its arguments are on the guest's stack) and vsyslog takes a Darwin va_list, the pointer */
+ISIM_ASM_CALLEE void d_vsyslog_c(int pri, const char *fmt, void *ap) {
+    va_list v; isim_va_from_darwin(&v, ap); d_vsyslog_impl(pri, fmt, v);
+}
+ISIM_ASM_CALLEE void d_syslog_v(int pri, const char *fmt, void *sp);
+__asm__(".text\n"
+        ".globl d_syslog\n.type d_syslog,%function\nd_syslog:\n  mov x2, sp\n  b d_syslog_v\n"
+        ".globl d_vsyslog\n.type d_vsyslog,%function\nd_vsyslog:\n  b d_vsyslog_c\n");
+ISIM_ASM_CALLEE void d_syslog_v(int pri, const char *fmt, void *sp) {
+    va_list ap; isim_va_from_darwin(&ap, sp); d_vsyslog_impl(pri, fmt, ap);
+}
+/* the wide printf/scanf families: same front ends (named arguments in x0-x3, variadic ones on the stack) */
+ISIM_ASM_CALLEE int d_swprintf_v(wchar_t *w, size_t n, const wchar_t *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vswprintf(w, n, f, ap); }
+ISIM_ASM_CALLEE int d_wprintf_v(const wchar_t *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vwprintf(f, ap); }
+ISIM_ASM_CALLEE int d_fwprintf_v(FILE *fp, const wchar_t *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vfwprintf(fp, f, ap); }
+ISIM_ASM_CALLEE int d_swscanf_v(const wchar_t *w, const wchar_t *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vswscanf(w, f, ap); }
+ISIM_ASM_CALLEE int d_vswprintf_c(wchar_t *w, size_t n, const wchar_t *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vswprintf(w, n, f, l); }
+ISIM_ASM_CALLEE int d_vwprintf_c(const wchar_t *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vwprintf(f, l); }
+ISIM_ASM_CALLEE int d_vfwprintf_c(FILE *fp, const wchar_t *f, void *ap) { va_list l; isim_va_from_darwin(&l, ap); return vfwprintf(fp, f, l); }
+__asm__(".text\n"
+        ".globl d_swprintf\n.type d_swprintf,%function\nd_swprintf:\n  mov x3, sp\n  b d_swprintf_v\n"
+        ".globl d_wprintf\n.type d_wprintf,%function\nd_wprintf:\n  mov x1, sp\n  b d_wprintf_v\n"
+        ".globl d_fwprintf\n.type d_fwprintf,%function\nd_fwprintf:\n  mov x2, sp\n  b d_fwprintf_v\n"
+        ".globl d_swscanf\n.type d_swscanf,%function\nd_swscanf:\n  mov x2, sp\n  b d_swscanf_v\n"
+        ".globl d_vswprintf\n.type d_vswprintf,%function\nd_vswprintf:\n  b d_vswprintf_c\n"
+        ".globl d_vwprintf\n.type d_vwprintf,%function\nd_vwprintf:\n  b d_vwprintf_c\n"
+        ".globl d_vfwprintf\n.type d_vfwprintf,%function\nd_vfwprintf:\n  b d_vfwprintf_c\n");
+#else
 ISIM_GUEST_ABI static void d_syslog(int pri, const char *fmt, ...) { va_list ap; va_start(ap, fmt); d_vsyslog(pri, fmt, ap); va_end(ap); }
+#endif
 
 /* ---------------- pwd.h: the device's one user ---------------- */
 /* adapted: like an iOS device, the app runs as "mobile"; its home is the app's home directory (HOME) */
@@ -769,8 +802,8 @@ ISIM_GUEST_ABI static int d_sysctlnametomib(const char *name, int *mib, size_t *
     P(wcscat), P(wcschr), P(wcscmp), P(wcscoll), P(wcscpy), P(wcscspn), P(wcsftime), P(wcsnlen), P(wcsncat), P(wcsncmp), P(wcsncpy), \
     P(wcspbrk), P(wcsrchr), P(wcsspn), P(wcsstr), P(wcstok), P(wcsxfrm), P(wcsdup), P(wcscasecmp), P(wcsncasecmp), \
     P(wcstod), P(wcstof), P(wcstold), P(wcstol), P(wcstoll), P(wcstoul), P(wcstoull), P(wmemchr), P(wmemcmp), P(wmemcpy), \
-    P(wmemmove), P(wmemset), P(swprintf), P(vswprintf), P(swscanf), P(fwide), P(fgetwc), P(fgetws), P(fputwc), P(fputws), P(getwc), \
-    P(getwchar), P(putwc), P(putwchar), P(ungetwc), P(fwprintf), P(wprintf), P(vfwprintf), P(vwprintf), \
+    P(wmemmove), P(wmemset), V(swprintf), L(vswprintf), V(swscanf), P(fwide), P(fgetwc), P(fgetws), P(fputwc), P(fputws), P(getwc), \
+    P(getwchar), P(putwc), P(putwchar), P(ungetwc), V(fwprintf), V(wprintf), L(vfwprintf), L(vwprintf), \
     A("_regcomp", d_regcomp), A("_regexec", d_regexec), A("_regerror", d_regerror), A("_regfree", d_regfree), \
     A("_openlog", d_openlog), A("_closelog", d_closelog), A("_setlogmask", d_setlogmask), A("_syslog", d_syslog), A("_vsyslog", d_vsyslog), \
     A("_getpwuid", d_getpwuid), A("_getpwnam", d_getpwnam), A("_getpwuid_r", d_getpwuid_r), A("_getpwnam_r", d_getpwnam_r), \

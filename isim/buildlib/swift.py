@@ -11,9 +11,10 @@ import re
 import subprocess
 
 from . import act
+from . import arch
 
-MT = "x86_64-apple-ios-simulator"
-TRIPLE = "x86_64-apple-ios15.0-simulator"
+MT = arch.module_triple()
+TRIPLE = arch.triple("15.0")
 SDK = "out/sdk"
 LIB = f"{SDK}/usr/lib/swift"
 SW = "out/swift"
@@ -108,7 +109,7 @@ class Swift:
         lib = dylib(name)
         args = list(args)
         from .graph import link_deps
-        self.n.build(lib, [self.c.ld, "-arch", "x86_64", "-platform_version", "ios-simulator", minos, "0", "-dylib",
+        self.n.build(lib, [self.c.ld, "-arch", arch.GUEST, "-platform_version", "ios-simulator", minos, "0", "-dylib",
                            "-install_name", f"/usr/lib/swift/lib{name}.dylib", "-o", lib, *objs, "-L", f"{SDK}/usr/lib",
                            "-L", LIB, "-F", f"{SDK}/System/Library/Frameworks", *args],
                      inputs=objs, implicit=list(implicit) + link_deps(args), desc=f"LINK lib{name}.dylib")
@@ -229,7 +230,7 @@ class Swift:
         objs = [self.c.compile(f"{L}/{s}", f"out/obj/libcxx/{os.path.basename(s)}.o", [self.c.cxx, *flags], order_only=self.c.header_stamps)
                 for s in srcs]
         lib = f"{SDK}/usr/lib/libc++.1.dylib"
-        self.n.build(lib, [self.c.ld, "-arch", "x86_64", "-platform_version", "ios-simulator", "15.0", "0", "-dylib",
+        self.n.build(lib, [self.c.ld, "-arch", arch.GUEST, "-platform_version", "ios-simulator", "15.0", "0", "-dylib",
                            "-install_name", "/usr/lib/libc++.1.dylib", "-o", lib, *objs, "-L", f"{SDK}/usr/lib", "-lSystem"],
                      inputs=objs, implicit=[f"{SDK}/usr/lib/libSystem.tbd"], desc="LINK libc++.1.dylib")
         link = os.path.join(self.c.root, SDK, "usr/lib/libc++.dylib")
@@ -657,7 +658,7 @@ class Swift:
         sdefs = [x for d in defs for x in ("-D", d, "-Xcc", f"-D{d}=1")]
         objs = [c.compile(f"{SRC}/_TestingInternals/{f}.cpp", f"{OBJ}/{f}.o",
                           [ISIM, "cc", "-x", "c++", "-std=c++20", "-O2", "-fno-exceptions", "-fno-objc-arc", *[f"-D{d}=1" for d in defs],
-                           '-DSWT_TESTING_LIBRARY_VERSION="6.2.4"', '-DSWT_TARGET_TRIPLE="x86_64-apple-ios-simulator"', "-I", INC],
+                           '-DSWT_TESTING_LIBRARY_VERSION="6.2.4"', '-DSWT_TARGET_TRIPLE="' + MT + '"', "-I", INC],
                           implicit=[ISIM, stamp], order_only=c.header_stamps) for f in ("Discovery", "Versions", "WillThrow")]
         objs.append(c.compile("swift/testing/isim-testing-support.c", f"{OBJ}/isim-testing-support.o", [ISIM, "cc", "-O2"],
                               implicit=[ISIM], order_only=c.header_stamps))

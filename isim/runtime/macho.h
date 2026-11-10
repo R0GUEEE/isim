@@ -6,6 +6,13 @@
 #define MH_EXECUTE 2
 #define MH_DYLIB 6
 #define CPU_TYPE_X86_64 0x01000007
+#define CPU_TYPE_ARM64 0x0100000C
+/* the Mach-O architecture of the guest, which is the host's own: isim runs the simulator SDK natively */
+#if defined(__aarch64__)
+#define CPU_TYPE_HOST CPU_TYPE_ARM64
+#else
+#define CPU_TYPE_HOST CPU_TYPE_X86_64
+#endif
 #define LC_REQ_DYLD 0x80000000u
 #define LC_SEGMENT_64 0x19
 #define LC_ID_DYLIB 0x0d

@@ -54,8 +54,8 @@ What it does per target (dependencies first, also across the projects of a works
     only fetches); remote binary targets are downloaded and checked against their SHA-256 checksum
   * project view: -list and -showBuildSettings (with -json) like xcodebuild; -tree (isim project) prints the targets,
     build phases and files
-  * .xcframeworks: the x86_64 iOS-simulator slice is used; arm64-only XCFrameworks cannot run on isim
-    (it executes x86_64 simulator code), and the build says so
+  * .xcframeworks: the host architecture's iOS-simulator slice is used (x86_64 on an Intel host, arm64 on an arm64
+    host); an XCFramework without it cannot run on isim (it executes native simulator code), and the build says so
   * shell script phases run like Xcode's: in their place among the target's build phases (a code generator before
     Compile Sources runs before compiling; its .swift/.m/.c outputs are compiled), with Xcode's environment (build
     settings, SCRIPT_INPUT_FILE_n, SCRIPT_INPUT_FILE_LIST_n for .xcfilelists, ...), skipped when their outputs are
@@ -86,7 +86,15 @@ import ibtool  # noqa: E402
 BIN = os.path.dirname(os.path.realpath(__file__))
 ISIM = os.path.join(BIN, 'isim')
 SDK = os.environ.get('ISIM_SDK') or os.path.normpath(os.path.join(BIN, '..', 'sdk'))
-TRIPLE_MODULE = 'x86_64-apple-ios-simulator'
+def _guest_arch():
+    """The architecture of the guest code isim runs: its own (isim executes the SDK's Mach-O natively, so apps are built
+    for the host's machine type, as in Apple's simulator)."""
+    m = platform.machine().lower()
+    return 'arm64' if m in ('aarch64', 'arm64') else 'x86_64'
+
+
+ARCH = _guest_arch()
+TRIPLE_MODULE = f'{ARCH}-apple-ios-simulator'
 
 
 def log(msg):
@@ -1078,7 +1086,7 @@ def uses_cxx_runtime(paths):
     files = [p for p in paths if os.path.isfile(p) and (p.endswith('.o') or macho_kind(p) in ('static', 'fat'))]
     if not files:
         return False
-    r = subprocess.run(['llvm-nm', '--arch=x86_64', '-u', '-j', *files], capture_output=True, text=True)
+    r = subprocess.run(['llvm-nm', f'--arch={ARCH}', '-u', '-j', *files], capture_output=True, text=True)
     return bool(CXX_RUNTIME.search('\n' + r.stdout))
 
 
@@ -1113,7 +1121,7 @@ def macho_kind(path):
 
 
 def xcframework_slice(path):
-    """The x86_64 iOS-simulator library of an .xcframework: (library path, headers dir or None)."""
+    """The host-architecture iOS-simulator library of an .xcframework: (library path, headers dir or None)."""
     info_path = os.path.join(path, 'Info.plist')
     if not os.path.exists(info_path):
         fail(f'{path}: not an XCFramework (no Info.plist)')
@@ -1122,21 +1130,23 @@ def xcframework_slice(path):
     libs = info.get('AvailableLibraries', [])
     for lib in libs:
         if lib.get('SupportedPlatform') == 'ios' and lib.get('SupportedPlatformVariant') == 'simulator' \
-                and 'x86_64' in lib.get('SupportedArchitectures', []):
+                and ARCH in lib.get('SupportedArchitectures', []):
             base = os.path.join(path, lib['LibraryIdentifier'])
             hdr = os.path.join(base, lib['HeadersPath']) if lib.get('HeadersPath') else None
             return os.path.join(base, lib['LibraryPath']), hdr
     have = ', '.join(f'{l.get("LibraryIdentifier")} ({"/".join(l.get("SupportedArchitectures", []))})' for l in libs) or 'none'
-    fail(f'{os.path.basename(path)} has no x86_64 iOS-simulator slice (it has: {have}). isim runs x86_64 iOS-simulator '
-         'code only: arm64 device and arm64-simulator binaries cannot execute here. Rebuild the XCFramework with an '
-         'x86_64 simulator slice (xcodebuild ... -sdk iphonesimulator ARCHS=x86_64) or build the library from source.')
+    fail(f'{os.path.basename(path)} has no {ARCH} iOS-simulator slice (it has: {have}). isim runs the host architecture '
+         f'only ({ARCH}): device-architecture and other simulator binaries cannot execute here. Rebuild the XCFramework '
+         f'with an {ARCH} simulator slice (xcodebuild ... -sdk iphonesimulator ARCHS={ARCH}) or build the library from '
+         'source.')
 
 
-def thin_x86_64(src, dst):
-    """Copies a Mach-O library, extracting the x86_64 slice of a universal binary (the isim loader takes thin files)."""
+def thin_arch(src, dst):
+    """Copies a Mach-O library, extracting the host architecture's slice of a universal binary (the isim loader takes
+    thin files)."""
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if macho_kind(src) == 'fat':
-        run(['llvm-lipo', src, '-thin', 'x86_64', '-output', dst])
+        run(['llvm-lipo', src, '-thin', ARCH, '-output', dst])
     else:
         shutil.copy2(src, dst)
 
@@ -2723,10 +2733,10 @@ class Builder:
                     shutil.rmtree(os.path.join(dst, sub), ignore_errors=True)
                 exe = os.path.join(dst, os.path.basename(src)[:-len('.framework')])
                 if macho_kind(exe) == 'fat':
-                    thin_x86_64(exe, exe + '.thin')
+                    thin_arch(exe, exe + '.thin')
                     os.replace(exe + '.thin', exe)
         else:
-            thin_x86_64(src, dst)
+            thin_arch(src, dst)
         return dst
 
     def copy_phases(self, target, s, path, before_link):
@@ -2894,7 +2904,7 @@ class Builder:
                     self.embed(lib, dest) if os.path.isdir(lib) else shutil.copy2(lib, dest)
                     if headers and os.path.isdir(headers):
                         shutil.copytree(headers, os.path.join(dest, 'Headers'), dirs_exist_ok=True)
-                    log(f'{target.name}: {os.path.basename(e)}: x86_64 simulator slice -> {dest} (isim\'s "{ph["name"]}")')
+                    log(f'{target.name}: {os.path.basename(e)}: {ARCH} simulator slice -> {dest} (isim\'s "{ph["name"]}")')
             return
         log(f'{target.name}: "{ph["name"]}" skipped: a CocoaPods phase isim does not replace')
 

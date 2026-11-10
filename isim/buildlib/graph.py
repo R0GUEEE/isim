@@ -7,6 +7,7 @@ import shutil
 import subprocess
 
 from . import act, apps, icons, swift
+from . import arch
 from .ninja import Ninja
 
 OUT = "out"
@@ -299,7 +300,7 @@ SWIFT_FRAMEWORKS = [
     ("Spatial", ""),   # issue #692: the SP* types and functions, header-only over <simd/simd.h>
 ]
 
-GUEST_CFLAGS = ["-target", f"x86_64-apple-ios{MINOS}-simulator", "-nostdlibinc", "-isystem", f"{SDK}/usr/include",
+GUEST_CFLAGS = ["-target", arch.triple(MINOS), "-nostdlibinc", "-isystem", f"{SDK}/usr/include",
                 "-iframework", FW, "-O1", "-g", f"-fobjc-runtime=ios-{MINOS}", "-Wall", "-Wno-unused-parameter",
                 "-Wno-objc-designated-initializers", "-Wno-missing-noescape", "-Wno-mismatched-parameter-types",
                 "-fno-stack-protector", *C_WERROR]
@@ -339,7 +340,7 @@ def swift_framework(c, name, link, overlay_name=None):
     link = [a.replace("@SWIFT@", f"{SDK}/usr/lib/swift") for a in link]   # @SWIFT@: the overlays' directory
     lib, overlay = f"{FW}/{name}.framework/{name}", f"{SDK}/usr/lib/swift/libswift{overlay_name or name}.dylib"
     objs = framework_objs(c, name)
-    return c.n.build(lib, [c.ld, "-arch", "x86_64", "-platform_version", "ios-simulator", "17.0", "0", "-dylib",   # like the overlays
+    return c.n.build(lib, [c.ld, "-arch", arch.GUEST, "-platform_version", "ios-simulator", "17.0", "0", "-dylib",   # like the overlays
                            "-install_name", f"/System/Library/Frameworks/{name}.framework/{name}", "-o", lib, *objs,
                            "-syslibroot", SDK,   # finds what a linked framework re-exports (CoreMedia: libswiftCoreMedia)
                            f"-L{SDK}/usr/lib", f"-F{FW}", "-lSystem", "-lobjc", *link, "-reexport_library", overlay],
@@ -363,7 +364,7 @@ def frameworks(c):
         if not objs:
             continue                                           # headers only (CoreFoundation)
         lib = f"{FW}/{name}.framework/{name}"
-        dylibs += n.build(lib, [c.ld, "-arch", "x86_64", "-platform_version", "ios-simulator", MINOS, "0", "-dylib",
+        dylibs += n.build(lib, [c.ld, "-arch", arch.GUEST, "-platform_version", "ios-simulator", MINOS, "0", "-dylib",
                                 "-install_name", f"/System/Library/Frameworks/{name}.framework/{name}", "-o", lib, *objs,
                                 f"-L{SDK}/usr/lib", f"-F{FW}", "-lSystem", "-lobjc", *link],
                           inputs=objs, implicit=link_deps(["-lSystem", "-lobjc", *link]), desc=f"LINK {name}.framework")

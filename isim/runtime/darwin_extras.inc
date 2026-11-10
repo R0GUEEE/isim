@@ -298,10 +298,46 @@ ISIM_GUEST_ABI static int d___tolower(int c) { return c >= 0 && c < 256 ? d_Defa
 ISIM_GUEST_ABI static int d___toupper(int c) { return c >= 0 && c < 256 ? d_DefaultRuneLocale.mapupper[c] : (int)towupper(c); }
 
 /* ---------------- libunwind (unw_*) ---------------- */
-/* adapted: frame-pointer unwinding of the calling thread (Apple's x86_64 code keeps frame pointers); there is no
-   compact-unwind or DWARF stepping, so frames without a frame pointer end the walk. unw_context_t is Darwin's
-   (21 registers: rax rbx rcx rdx rdi rsi rbp rsp r8-r15 rip rflags cs fs gs), unw_cursor_t holds the walk. */
+/* adapted: frame-pointer unwinding of the calling thread (both ISAs keep frame pointers here); there is no
+   compact-unwind or DWARF stepping, so frames without a frame pointer end the walk.
+   x86-64: unw_context_t is Darwin's 21 registers (rax rbx rcx rdx rdi rsi rbp rsp r8-r15 rip rflags cs fs gs).
+   arm64:  Apple's unw_context_t is x0-x28, fp, lr, sp, pc (33 registers); the frame record is {fp, lr} like x86-64's
+           {rbp, ret}. unw_cursor_t holds the walk on both. */
 struct d_unw_cursor { uint64_t rip, rsp, rbp, rbx; uint64_t pad[29]; };
+#if defined(__aarch64__)
+ISIM_GUEST_ABI __attribute__((naked)) static int d_unw_getcontext(uint64_t *ctx) {
+    __asm__ volatile(
+        "stp x19, x20, [x0, #152]\n stp x21, x22, [x0, #168]\n stp x23, x24, [x0, #184]\n"
+        "stp x25, x26, [x0, #200]\n stp x27, x28, [x0, #216]\n"
+        "stp x29, x30, [x0, #232]\n"                                          /* fp, lr */
+        "mov x1, sp\n str x1, [x0, #248]\n"                                  /* the caller's sp */
+        "str x30, [x0, #256]\n"                                               /* pc: the return address */
+        "mov x0, #0\n ret\n");
+}
+ISIM_GUEST_ABI static int d_unw_init_local(struct d_unw_cursor *c, const uint64_t *ctx) {
+    memset(c, 0, sizeof *c);
+    c->rip = ctx[32]; c->rsp = ctx[31]; c->rbp = ctx[29]; c->rbx = ctx[19];
+    return 0;
+}
+ISIM_GUEST_ABI static int d_unw_step(struct d_unw_cursor *c) {
+    uint64_t fp = c->rbp;
+    if (!fp || fp < c->rsp || (fp & 7) || fp - c->rsp > (64u << 20)) return 0;
+    uint64_t next_fp = ((uint64_t *)fp)[0], ret = ((uint64_t *)fp)[1];
+    if (!ret) return 0;
+    c->rip = ret; c->rsp = fp + 16; c->rbp = next_fp;
+    return 1;
+}
+ISIM_GUEST_ABI static int d_unw_get_reg(struct d_unw_cursor *c, int reg, uint64_t *v) {
+    switch (reg) {
+    case -1: case 32: *v = c->rip; return 0;          /* UNW_REG_IP, UNW_ARM64_PC */
+    case -2: case 31: *v = c->rsp; return 0;          /* UNW_REG_SP, UNW_ARM64_SP */
+    case 29: *v = c->rbp; return 0;                   /* UNW_ARM64_FP */
+    case 30: *v = c->rip - 4; return 0;               /* UNW_ARM64_LR (the call's return address) */
+    case 19: *v = c->rbx; return 0;                   /* UNW_ARM64_X19 */
+    default: return -6542;                            /* UNW_EBADREG */
+    }
+}
+#else
 ISIM_GUEST_ABI __attribute__((naked)) static int d_unw_getcontext(uint64_t *ctx) {
     __asm__ volatile(
         "mov %rax, 0x00(%rdi)\n mov %rbx, 0x08(%rdi)\n mov %rcx, 0x10(%rdi)\n mov %rdx, 0x18(%rdi)\n"
@@ -334,6 +370,7 @@ ISIM_GUEST_ABI static int d_unw_get_reg(struct d_unw_cursor *c, int reg, uint64_
     default: return -6542;                            /* UNW_EBADREG */
     }
 }
+#endif
 
 /* ---------------- toolchain ---------------- */
 extern int __cxa_thread_atexit_impl(void (*)(void *), void *, void *);
@@ -456,6 +493,57 @@ ISIM_GUEST_ABI static size_t d_strftime_l(char *s, size_t n, const char *f, cons
 ISIM_GUEST_ABI static char *d_strptime_l(const char *s, const char *f, struct tm *t, locale_t l) {
     locale_t old = uselocale(LOC(l)); char *r = strptime(s, f, t); uselocale(old); return r;
 }
+/* the printf/scanf _l variants: the host's under the locale for this call.
+ * arm64: Darwin passes the variadic arguments on the guest's stack and a Darwin va_list is the pointer itself
+ * (runtime.h, isim_va_from_darwin), so each variadic function is a front end handing sp to a body plus the body, and
+ * each v* function takes that pointer; x86-64 keeps the direct passthroughs. */
+#if defined(__aarch64__)
+ISIM_ASM_CALLEE int d_snprintf_l_v(char *s, size_t n, locale_t l, const char *f, void *sp);
+ISIM_ASM_CALLEE int d_sprintf_l_v(char *s, locale_t l, const char *f, void *sp);
+ISIM_ASM_CALLEE int d_asprintf_l_v(char **s, locale_t l, const char *f, void *sp);
+ISIM_ASM_CALLEE int d_sscanf_l_v(const char *s, locale_t l, const char *f, void *sp);
+ISIM_ASM_CALLEE int d_printf_l_v(locale_t l, const char *f, void *sp);
+ISIM_ASM_CALLEE int d_fprintf_l_v(FILE *fp, locale_t l, const char *f, void *sp);
+__asm__(".text\n"
+        ".globl d_snprintf_l\n.type d_snprintf_l,%function\nd_snprintf_l:\n  mov x4, sp\n  b d_snprintf_l_v\n"
+        ".globl d_sprintf_l\n.type d_sprintf_l,%function\nd_sprintf_l:\n  mov x3, sp\n  b d_sprintf_l_v\n"
+        ".globl d_asprintf_l\n.type d_asprintf_l,%function\nd_asprintf_l:\n  mov x3, sp\n  b d_asprintf_l_v\n"
+        ".globl d_sscanf_l\n.type d_sscanf_l,%function\nd_sscanf_l:\n  mov x3, sp\n  b d_sscanf_l_v\n"
+        ".globl d_printf_l\n.type d_printf_l,%function\nd_printf_l:\n  mov x2, sp\n  b d_printf_l_v\n"
+        ".globl d_fprintf_l\n.type d_fprintf_l,%function\nd_fprintf_l:\n  mov x3, sp\n  b d_fprintf_l_v\n");
+ISIM_ASM_CALLEE int d_vsnprintf_l(char *s, size_t n, locale_t l, const char *f, void *ap) {
+    va_list v; isim_va_from_darwin(&v, ap);
+    locale_t old = uselocale(LOC(l)); int r = vsnprintf(s, n, f, v); uselocale(old); return r;
+}
+ISIM_ASM_CALLEE int d_vasprintf_l(char **s, locale_t l, const char *f, void *ap) {
+    va_list v; isim_va_from_darwin(&v, ap);
+    locale_t old = uselocale(LOC(l)); int r = vasprintf(s, f, v); uselocale(old); return r;
+}
+ISIM_ASM_CALLEE int d_vsscanf_l(const char *s, locale_t l, const char *f, void *ap) {
+    va_list v; isim_va_from_darwin(&v, ap);
+    locale_t old = uselocale(LOC(l)); int r = vsscanf(s, f, v); uselocale(old); return r;
+}
+ISIM_ASM_CALLEE int d_snprintf_l_v(char *s, size_t n, locale_t l, const char *f, void *sp) {
+    va_list ap; isim_va_from_darwin(&ap, sp); return d_vsnprintf_l(s, n, l, f, &ap);
+}
+ISIM_ASM_CALLEE int d_sprintf_l_v(char *s, locale_t l, const char *f, void *sp) {
+    va_list ap; isim_va_from_darwin(&ap, sp); return d_vsnprintf_l(s, (size_t)-1 >> 1, l, f, &ap);
+}
+ISIM_ASM_CALLEE int d_asprintf_l_v(char **s, locale_t l, const char *f, void *sp) {
+    va_list ap; isim_va_from_darwin(&ap, sp); return d_vasprintf_l(s, l, f, &ap);
+}
+ISIM_ASM_CALLEE int d_sscanf_l_v(const char *s, locale_t l, const char *f, void *sp) {
+    va_list ap; isim_va_from_darwin(&ap, sp); return d_vsscanf_l(s, l, f, &ap);
+}
+ISIM_ASM_CALLEE int d_printf_l_v(locale_t l, const char *f, void *sp) {
+    va_list ap; isim_va_from_darwin(&ap, sp);
+    locale_t old = uselocale(LOC(l)); int r = vprintf(f, ap); uselocale(old); return r;
+}
+ISIM_ASM_CALLEE int d_fprintf_l_v(FILE *fp, locale_t l, const char *f, void *sp) {
+    va_list ap; isim_va_from_darwin(&ap, sp);
+    locale_t old = uselocale(LOC(l)); int r = vfprintf(fp, f, ap); uselocale(old); return r;
+}
+#else
 /* the printf/scanf _l variants: the host's under the locale for this call */
 ISIM_GUEST_ABI static int d_vsnprintf_l(char *s, size_t n, locale_t l, const char *f, va_list ap) {
     locale_t old = uselocale(LOC(l)); int r = vsnprintf(s, n, f, ap); uselocale(old); return r;
@@ -476,6 +564,7 @@ ISIM_GUEST_ABI static int d_printf_l(locale_t l, const char *f, ...) {
 ISIM_GUEST_ABI static int d_fprintf_l(FILE *fp, locale_t l, const char *f, ...) {
     va_list ap; va_start(ap, f); locale_t old = uselocale(LOC(l)); int r = vfprintf(fp, f, ap); uselocale(old); va_end(ap); return r;
 }
+#endif
 #define DARWIN_LOCALE \
     A("_setlocale", d_setlocale), A("_localeconv", d_localeconv), A("_localeconv_l", d_localeconv_l), \
     A("_newlocale", d_newlocale), A("_freelocale", d_freelocale), A("_duplocale", d_duplocale), A("_uselocale", d_uselocale), \

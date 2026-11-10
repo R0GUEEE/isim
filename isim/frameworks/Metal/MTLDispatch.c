@@ -11,9 +11,28 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-/* ---- fibers: x86-64 System V context switch (callee-saved registers on the old stack, then the stack pointer) ---- */
+/* ---- fibers: a context switch saving the callee-saved registers on the old stack and swapping the stack pointer ----
+ * x86-64 System V: rbp, rbx, r12-r15 plus the SSE control word; arm64: x19-x28, fp/lr and the low halves of v8-v15,
+ * which AAPCS64 makes callee-saved. A new fiber's first switch returns into the start stub with the fiber and its body
+ * in two callee-saved registers (x86-64: r12, r13; arm64: x19, x20). */
 void isim_mtl_switch(void **save_sp, void *to_sp);
 void isim_mtl_fiber_start(void);
+#if defined(__aarch64__)
+__asm__(
+    ".text\n.private_extern _isim_mtl_switch\n.globl _isim_mtl_switch\n_isim_mtl_switch:\n"
+    "  sub sp, sp, #160\n"
+    "  stp x19, x20, [sp, #0]\n  stp x21, x22, [sp, #16]\n  stp x23, x24, [sp, #32]\n"
+    "  stp x25, x26, [sp, #48]\n  stp x27, x28, [sp, #64]\n  stp x29, x30, [sp, #80]\n"
+    "  stp d8, d9, [sp, #96]\n  stp d10, d11, [sp, #112]\n  stp d12, d13, [sp, #128]\n  stp d14, d15, [sp, #144]\n"
+    "  mov x9, sp\n  str x9, [x0]\n  mov sp, x1\n"
+    "  ldp x19, x20, [sp, #0]\n  ldp x21, x22, [sp, #16]\n  ldp x23, x24, [sp, #32]\n"
+    "  ldp x25, x26, [sp, #48]\n  ldp x27, x28, [sp, #64]\n  ldp x29, x30, [sp, #80]\n"
+    "  ldp d8, d9, [sp, #96]\n  ldp d10, d11, [sp, #112]\n  ldp d12, d13, [sp, #128]\n  ldp d14, d15, [sp, #144]\n"
+    "  add sp, sp, #160\n  ret\n"
+    /* a new fiber's first switch returns here: x19 = the fiber, x20 = its body */
+    ".private_extern _isim_mtl_fiber_start\n.globl _isim_mtl_fiber_start\n_isim_mtl_fiber_start:\n"
+    "  mov x0, x19\n  blr x20\n  brk #1\n");
+#else
 __asm__(
     ".text\n.private_extern _isim_mtl_switch\n.globl _isim_mtl_switch\n_isim_mtl_switch:\n"
     "  pushq %rbp\n  pushq %rbx\n  pushq %r12\n  pushq %r13\n  pushq %r14\n  pushq %r15\n"
@@ -24,6 +43,7 @@ __asm__(
     /* a new fiber's first switch returns here: r12 = the fiber, r13 = its body */
     ".private_extern _isim_mtl_fiber_start\n.globl _isim_mtl_fiber_start\n_isim_mtl_fiber_start:\n"
     "  movq %r12, %rdi\n  callq *%r13\n  ud2\n");
+#endif
 
 #define FIBER_STACK (128 * 1024)
 
@@ -61,6 +81,15 @@ static void barrier(void *sched) {
 
 static void fiber_init(fiber *f) {
     uint64_t *top = (uint64_t *)(f->stack + FIBER_STACK);
+#if defined(__aarch64__)
+    /* the frame isim_mtl_switch loads, in its order: x19-x28, fp, lr, then d8-d15 (20 words, see the assembly above) */
+    top -= 2;                                     /* 16-byte alignment */
+    top -= 20;
+    for (int i = 0; i < 20; i++) top[i] = 0;
+    top[0] = (uint64_t)(uintptr_t)f;                          /* x19: the fiber */
+    top[1] = (uint64_t)(uintptr_t)fiber_body;                 /* x20: the body */
+    top[11] = (uint64_t)(uintptr_t)isim_mtl_fiber_start;      /* lr: the start stub */
+#else
     top -= 2;                                     /* 16-byte aligned once isim_mtl_fiber_start is "returned" to */
     *--top = (uint64_t)(uintptr_t)isim_mtl_fiber_start;
     *--top = 0;                                   /* rbp */
@@ -70,6 +99,7 @@ static void fiber_init(fiber *f) {
     *--top = 0;                                   /* r14 */
     *--top = 0;                                   /* r15 */
     *--top = 0x1f80 | (uint64_t)0x37f << 32;      /* mxcsr, x87 control word: the defaults */
+#endif
     f->sp = top;
     f->done = 0;
 }

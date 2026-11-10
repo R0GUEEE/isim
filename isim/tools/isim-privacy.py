@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import plistlib
+import platform
 import struct
 import sys
 
@@ -100,15 +101,20 @@ def executable(bundle):
     return path if path and os.path.isfile(path) else None
 
 
+CPU_TYPE_ARM64 = 0x0100000C
+CPU_TYPE_X86_64 = 0x01000007
+GUEST_CPU = CPU_TYPE_ARM64 if platform.machine().lower() in ("aarch64", "arm64") else CPU_TYPE_X86_64
+
+
 def macho_symbols(data):
-    """the symbol names of a 64-bit Mach-O image (its x86_64 slice in a fat file)"""
+    """the symbol names of a 64-bit Mach-O image (the host architecture's slice in a fat file)"""
     off = 0
     if len(data) < 32:
         return []
     if struct.unpack_from("<I", data, 0)[0] in (0xbebafeca, 0xcafebabe):
         for i in range(struct.unpack_from(">I", data, 4)[0]):
             cpu, _, o, _, _ = struct.unpack_from(">iiIII", data, 8 + i * 20)
-            if cpu == 0x01000007:
+            if cpu == GUEST_CPU:
                 off = o
     if struct.unpack_from("<I", data, off)[0] != 0xfeedfacf:
         return []

@@ -1,0 +1,92 @@
+# isim on arm64: the same build and the same tests as ci.yml, on GitHub's arm64 Ubuntu 24.04 runners.
+#
+# isim runs its guests natively, so on this runner the SDK, the frameworks, the apps and every guest binary are
+# arm64 (arm64-apple-ios-simulator) instead of x86_64 — the arch module (isim/buildlib/arch.py) derives all of that
+# from the host. This workflow is the arm64 counterpart of ci.yml: build, then test, with caches kept apart from the
+# x86_64 ones (their contents are architecture-specific).
+#
+# Start it from the Actions tab (or by pushing to the branch it is defined on). A full build on a cold cache takes
+# well over an hour (Swift's stdlib and runtime for the arm64 simulator, libc++, ~1600 files) — caches are restored
+# from the previous run of this workflow.
+name: CI (arm64)
+on:
+  workflow_dispatch:
+  push:
+    branches: [arm64]
+concurrency:
+  group: ci-arm64-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  SWIFT_KEY: swift-6.2.4-ubuntu24.04-aarch64     # isim/ci/swift-toolchain.sh's toolchain, per architecture
+jobs:
+  build:
+    name: build (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - name: CI image (Ubuntu 24.04, arm64)
+        uses: docker/build-push-action@v7
+        with:
+          context: isim/ci
+          load: true
+          tags: isim-ci
+          cache-from: type=gha,scope=arm64-ci
+          cache-to: type=gha,mode=max,scope=arm64-ci
+      - name: Pinned third-party sources (restore)
+        id: third-party
+        uses: actions/cache/restore@v5
+        with:
+          path: third_party
+          key: third-party-arm64-${{ hashFiles('isim/buildlib/fetch.py') }}
+      - name: Build cache (restore)
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            isim/out
+            !isim/out/pytest
+            !isim/out/test-*
+          key: build-arm64-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: |
+            build-arm64-
+      - name: Swift toolchain (restore)
+        id: swift-toolchain
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/swift-toolchain
+          key: ${{ env.SWIFT_KEY }}
+      - name: Swift toolchain (download)
+        if: steps.swift-toolchain.outputs.cache-hit != 'true'
+        run: isim/ci/swift-toolchain.sh ~/swift-toolchain
+      - name: Swift toolchain (save)
+        if: steps.swift-toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/swift-toolchain
+          key: ${{ env.SWIFT_KEY }}
+      - name: Build
+        run: |
+          docker run --rm -v "$PWD:$PWD" -w "$PWD" \
+            -v "$HOME/swift-toolchain:$HOME/swift-toolchain:ro" -e ISIM_SWIFT_TOOLCHAIN="$HOME/swift-toolchain" \
+            -e CI=1 isim-ci python3 isim/build.py ci build
+      - name: File ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" isim/out third_party || true
+      - name: Pinned third-party sources (save)
+        if: ${{ !cancelled() && steps.third-party.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: third_party
+          key: third-party-arm64-${{ hashFiles('isim/buildlib/fetch.py') }}
+      - name: Build cache (save)
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            isim/out
+            !isim/out/pytest
+            !isim/out/test-*
+          key: build-arm64-${{ github.sha }}-${{ github.run_id }}

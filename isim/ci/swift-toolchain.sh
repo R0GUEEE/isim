@@ -5,11 +5,16 @@
 # toolchain. Usage: isim/ci/swift-toolchain.sh DIR
 set -euo pipefail
 dir=${1:?usage: swift-toolchain.sh DIR}
-platform=ubuntu24.04
 version=6.2.4
-# the tarball's SHA-256, taken from a download whose swift.org signature checked out ("Swift 6.x Release Signing Key",
-# 52BB 7E3D E28A 71BE 22EC 05FF EF80 A866 B47A 981F): pinned, so CI does not depend on fetching the keys
-sha256=15608c4fa0364ef906014343d81639cf58169e8a40de2b2d3503c3f35a8bb66d
+# the tarball per host architecture. the SHA-256s are pinned, so CI does not depend on fetching swift.org's signing
+# keys; each is the checksum of the tarball for that architecture at that release (the same tarball
+# `isim toolchain install` verifies with "Swift 6.x Release Signing Key", 52BB 7E3D E28A 71BE 22EC 05FF EF80 A866
+# B47A 981F, on a desktop)
+case "$(uname -m)" in
+  x86_64|amd64)  platform=ubuntu24.04;         sha256=15608c4fa0364ef906014343d81639cf58169e8a40de2b2d3503c3f35a8bb66d ;;
+  aarch64|arm64) platform=ubuntu24.04-aarch64; sha256=420bcde2ee4b2a36e49524b15373d0cb24eb4b679103f8cc8349af8a768832b7 ;;
+  *) echo "swift-toolchain.sh: no swift.org build for $(uname -m)" >&2; exit 1 ;;
+esac
 name=swift-$version-RELEASE-$platform
 url=https://download.swift.org/swift-$version-release/${platform//./}/swift-$version-RELEASE/$name.tar.gz
 if [ -x "$dir/usr/bin/swift-frontend" ] && "$dir/usr/bin/swift-frontend" --version | grep -q "(swift-$version-RELEASE)"; then

@@ -7,7 +7,8 @@
 #   isim reset                   erase the device: installed apps, app data and settings
 #   isim run <App.app> [args...]: install, boot and open the app (headless or ISIM_STANDALONE=1: the app alone)
 #     options: [--os 17|18|26|27] [--device iphonese|iphone13mini|iphone14|iphone15|iphone15plus|iphone15promax|iphone16pro|iphone16promax|iphone17|iphoneair|iphone17pro|iphone17promax|ipadmini|ipadair11|ipadpro11|ipadpro13] [--zoom N] [--dark] [--headless --script "..."]
-#   isim cc  <clang args...>     compile/link for the isim iOS-simulator SDK (x86_64) with LLVM's clang / lld (CLANG=PATH)
+#   isim cc  <clang args...>     compile/link for the isim iOS-simulator SDK (the host's architecture: x86_64 or arm64)
+#                                with LLVM's clang / lld (CLANG=PATH)
 #   isim swiftc [-embedded] <swiftc args...>  compile Swift for the simulator (needs Swift 6.2.4: isim toolchain install)
 #   isim metal-compile -o lib.dylib [-I dir] [-D NAME=VALUE] file.metal...  Metal Shading Language for Metal on the CPU
 #   isim toolchain [status|install|which]   the Swift 6.2.4 toolchain isim compiles with: which one and why | install it
@@ -62,6 +63,14 @@ ISIM_INSTALL_DIR=${ISIM_INSTALL_DIR:-$HOME/.local/lib/isim}    # installed relea
 # a copy of this script outside a release (e.g. cp'd into ~/bin) uses the active installed release
 [ -d "$BIN/../sdk" ] || [ ! -x "$ISIM_INSTALL_DIR/current/bin/isim-runtime" ] || BIN=$(cd -- "$ISIM_INSTALL_DIR/current/bin" && pwd)
 SDK=${ISIM_SDK:-$BIN/../sdk}
+# the guest architecture: isim runs its guests natively, so the SDK, frameworks and apps are the host's own machine code
+# (x86_64 on an Intel host, arm64 on an Apple-silicon or other aarch64 host)
+case "$(uname -m)" in
+  aarch64|arm64) GUEST_ARCH=arm64 ;;
+  x86_64|amd64) GUEST_ARCH=x86_64 ;;
+  *) echo "isim: unsupported host architecture $(uname -m): isim runs on x86_64 and arm64 Linux" >&2; exit 2 ;;
+esac
+guest_target() { echo "$GUEST_ARCH-apple-ios${1:-${ISIM_MIN_IOS:-17.0}}-simulator"; }
 DATA=$(realpath -m -- "${ISIM_DATA:-$HOME/.local/share/isim}")   # absolute: apps resolve paths under it
 [ -z "${ISIM_DATA:-}" ] || export ISIM_DATA=$DATA
 cmd=${1:-help}; shift || true
@@ -545,10 +554,10 @@ case "$cmd" in
       fi
       link+=(--ld-path="$lld")
     fi
-    exec "$clang" -target x86_64-apple-ios${ISIM_MIN_IOS:-17.0}-simulator -isysroot "$SDK" -fobjc-arc "${link[@]}" "$@" ;;
+    exec "$clang" -target "$(guest_target)" -isysroot "$SDK" -fobjc-arc "${link[@]}" "$@" ;;
   swiftc)
     swift_toolchain || exit 1
-    run=("$SWIFT_TC/bin/swiftc" -target x86_64-apple-ios${ISIM_MIN_IOS:-17.0}-simulator)
+    run=("$SWIFT_TC/bin/swiftc" -target "$(guest_target)")
     if [ "${1:-}" = "-embedded" ]; then
       shift
       exec "${run[@]}" -enable-experimental-feature Embedded -enable-experimental-feature Extern -wmo -parse-as-library -Osize \
