@@ -77,11 +77,11 @@ jobs:
         if: failure()
         run: |
           docker run --rm -v "$PWD:$PWD" -w "$PWD" -e CI=1 isim-ci sh -c '
-            ls -l out/bin/isim-runtime || true; file out/bin/isim-runtime 2>/dev/null || true
-            readelf -l out/bin/isim-runtime 2>/dev/null | grep -A1 interpreter || true
-            ldd out/bin/isim-runtime 2>&1 | head -20
+            ls -l isim/out/bin/isim-runtime || true; file isim/out/bin/isim-runtime 2>/dev/null || true
+            readelf -l isim/out/bin/isim-runtime 2>/dev/null | grep -A1 interpreter || true
+            ldd isim/out/bin/isim-runtime 2>&1 | head -20
             apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq gdb >/dev/null 2>&1
-            echo "--- gdb:"; gdb -batch -ex run -ex "bt 15" --args out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | tail -40' || true
+            echo "--- gdb:"; gdb -batch -ex run -ex "bt 15" --args isim/out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | tail -40' || true
       - name: File ownership
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" isim/out third_party || true
