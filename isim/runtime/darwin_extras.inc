@@ -505,8 +505,9 @@ ISIM_GUEST_ABI static char *d_strptime_l(const char *s, const char *f, struct tm
  * each v* function takes that pointer; x86-64 keeps the direct passthroughs. */
 #if defined(__aarch64__)
 /* the front ends are assembly (below): C only needs their names for the symbol table */
-void d_snprintf_l(void); void d_sprintf_l(void); void d_asprintf_l(void); void d_sscanf_l(void);
-void d_printf_l(void); void d_fprintf_l(void);    /* (the v* variants are C functions, below) */
+ISIM_GUEST_ABI void d_snprintf_l(void); ISIM_GUEST_ABI void d_sprintf_l(void); ISIM_GUEST_ABI void d_asprintf_l(void);
+ISIM_GUEST_ABI void d_sscanf_l(void); ISIM_GUEST_ABI void d_printf_l(void); ISIM_GUEST_ABI void d_fprintf_l(void);
+/* (the v* variants are C functions, below) */
 ISIM_ASM_CALLEE int d_snprintf_l_v(char *s, size_t n, locale_t l, const char *f, void *sp);
 ISIM_ASM_CALLEE int d_sprintf_l_v(char *s, locale_t l, const char *f, void *sp);
 ISIM_ASM_CALLEE int d_asprintf_l_v(char **s, locale_t l, const char *f, void *sp);

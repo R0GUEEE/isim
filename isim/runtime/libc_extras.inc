@@ -469,8 +469,9 @@ ISIM_ASM_CALLEE void d_vsyslog_c(int pri, const char *fmt, void *ap) {
 }
 ISIM_ASM_CALLEE void d_syslog_v(int pri, const char *fmt, void *sp);
 /* the front ends are assembly (below): C only needs their names for the symbol table */
-void d_syslog(void); void d_vsyslog(void); void d_swprintf(void); void d_wprintf(void); void d_fwprintf(void);
-void d_swscanf(void); void d_vswprintf(void); void d_vwprintf(void); void d_vfwprintf(void);
+ISIM_GUEST_ABI void d_syslog(void); ISIM_GUEST_ABI void d_vsyslog(void); ISIM_GUEST_ABI void d_swprintf(void);
+ISIM_GUEST_ABI void d_wprintf(void); ISIM_GUEST_ABI void d_fwprintf(void); ISIM_GUEST_ABI void d_swscanf(void);
+ISIM_GUEST_ABI void d_vswprintf(void); ISIM_GUEST_ABI void d_vwprintf(void); ISIM_GUEST_ABI void d_vfwprintf(void);
 __asm__(".text\n"
         ".globl d_syslog\n.type d_syslog,%function\nd_syslog:\n  mov x2, sp\n  b d_syslog_v\n"
         ".globl d_vsyslog\n.type d_vsyslog,%function\nd_vsyslog:\n  b d_vsyslog_c\n");

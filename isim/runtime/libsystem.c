@@ -533,10 +533,12 @@ void libsystem_init(int argc, char **argv) {
 #define V(n) A("_" #n, d_##n)
 #define L(n) A("_" #n, d_##n)
 /* the front ends are assembly (below): C only needs their names for the symbol table */
-void d_printf(void); void d_fprintf(void); void d_snprintf(void); void d_sprintf(void); void d_asprintf(void);
-void d_sscanf(void); void d_scanf(void); void d_fscanf(void);
-void d_vprintf(void); void d_vfprintf(void); void d_vsnprintf(void); void d_vsprintf(void); void d_vasprintf(void);
-void d_vsscanf(void); void d_vscanf(void); void d_vfscanf(void);
+ISIM_GUEST_ABI void d_printf(void); ISIM_GUEST_ABI void d_fprintf(void); ISIM_GUEST_ABI void d_snprintf(void);
+ISIM_GUEST_ABI void d_sprintf(void); ISIM_GUEST_ABI void d_asprintf(void); ISIM_GUEST_ABI void d_sscanf(void);
+ISIM_GUEST_ABI void d_scanf(void); ISIM_GUEST_ABI void d_fscanf(void); ISIM_GUEST_ABI void d_vprintf(void);
+ISIM_GUEST_ABI void d_vfprintf(void); ISIM_GUEST_ABI void d_vsnprintf(void); ISIM_GUEST_ABI void d_vsprintf(void);
+ISIM_GUEST_ABI void d_vasprintf(void); ISIM_GUEST_ABI void d_vsscanf(void); ISIM_GUEST_ABI void d_vscanf(void);
+ISIM_GUEST_ABI void d_vfscanf(void);
 ISIM_ASM_CALLEE int d_printf_v(const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vprintf(f, ap); }
 __asm__(".text\n"
         ".globl d_printf\n.type d_printf,%function\nd_printf:\n  mov x1, sp\n  b d_printf_v\n");
