@@ -525,7 +525,7 @@ def fragment_wrapper(f, unit):
     name = f["name"]
     body = ["    const __isim_mtl_args *__a = __f->args; (void)__a;"]
     if unit.discard:
-        body.append("    void *__jb[5]; if (__builtin_setjmp(__jb)) return 0; __isim_discard_jb = __jb;")
+        body.append("    __isim_jmp __jb; if (__isim_setjmp(__jb)) return 0; __isim_discard_jb = __jb;")
     args, stage = [], None
     for k, (ty, nm, at, ar) in enumerate(f["params"]):
         base = ty.replace("const ", "").replace("&", "").strip()

@@ -988,10 +988,29 @@ template <class T> inline void __isim_color_out(__isim_mtl_fragment_in *f, int n
     else { f->color[n][0] = (float)v; f->color[n][1] = f->color[n][2] = 0; f->color[n][3] = 1; }
 }
 template <class T> inline void __isim_depth_out(__isim_mtl_fragment_in *f, const T &v) { f->depth = (float)v; f->depth_written = 1; }
-/* discard_fragment ends the fragment function: back to its entry point, which reports the fragment discarded */
+/* discard_fragment ends the fragment function: back to its entry point, which reports the fragment discarded.
+ * The jump uses __builtin_setjmp/__builtin_longjmp on x86-64; clang has neither for arm64, so the same buffer and both
+ * jumps are implemented here (x19-x28, fp, lr and sp). */
+#if defined(__arm64__) || defined(__aarch64__)
+typedef void *__isim_jmp[13];
+__attribute__((naked, unused)) static int __isim_setjmp(void **b) {
+    __asm__ volatile("stp x19, x20, [x0]\n  stp x21, x22, [x0, #16]\n  stp x23, x24, [x0, #32]\n"
+                     "  stp x25, x26, [x0, #48]\n  stp x27, x28, [x0, #64]\n  stp x29, x30, [x0, #80]\n"
+                     "  mov x9, sp\n  str x9, [x0, #96]\n  mov w0, #0\n  ret\n");
+}
+__attribute__((naked, unused)) static void __isim_longjmp(void **b, int v) {
+    __asm__ volatile("ldp x19, x20, [x0]\n  ldp x21, x22, [x0, #16]\n  ldp x23, x24, [x0, #32]\n"
+                     "  ldp x25, x26, [x0, #48]\n  ldp x27, x28, [x0, #64]\n  ldp x29, x30, [x0, #80]\n"
+                     "  ldr x9, [x0, #96]\n  mov sp, x9\n  mov w0, #1\n  ret\n");
+}
+#else
+typedef void *__isim_jmp[5];
+static inline int __isim_setjmp(void **b) { return __builtin_setjmp(b); }
+static inline void __isim_longjmp(void **b, int v) { (void)v; __builtin_longjmp(b, 1); }   /* the builtin takes a constant */
+#endif
 inline thread_local void **__isim_discard_jb;
 namespace metal {
-[[noreturn]] inline void discard_fragment() { __builtin_longjmp(__isim_discard_jb, 1); }
+[[noreturn]] inline void discard_fragment() { __isim_longjmp(__isim_discard_jb, 1); }
 /* derivatives: one fragment at a time on the CPU, so 0 (adapted) */
 template <class T> inline T dfdx(T) { return T{}; }
 template <class T> inline T dfdy(T) { return T{}; }

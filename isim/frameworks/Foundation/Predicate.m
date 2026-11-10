@@ -10,7 +10,26 @@
 #include <math.h>
 #include <stdlib.h>
 #include <objc/message.h>
-typedef void *pp_jmp[5];   /* __builtin_setjmp buffer (no setjmp in isim's libSystem) */
+/* a jump buffer for the parser's error path (isim's libSystem has no setjmp): on x86-64 clang's __builtin_setjmp
+ * needs five words; on arm64 clang has no __builtin_setjmp at all, so the two stubs below save x19-x28, fp, lr and sp
+ * (13 words) and the longjmp restores them and returns 1 where the setjmp returned 0 */
+#if defined(__arm64__) || defined(__aarch64__)
+typedef void *pp_jmp[13];
+__attribute__((naked)) static int pp_setjmp(void **b) {
+    __asm__ volatile("stp x19, x20, [x0]\n  stp x21, x22, [x0, #16]\n  stp x23, x24, [x0, #32]\n"
+                     "  stp x25, x26, [x0, #48]\n  stp x27, x28, [x0, #64]\n  stp x29, x30, [x0, #80]\n"
+                     "  mov x9, sp\n  str x9, [x0, #96]\n  mov w0, #0\n  ret\n");
+}
+__attribute__((naked)) static void pp_longjmp(void **b, int v) {
+    __asm__ volatile("ldp x19, x20, [x0]\n  ldp x21, x22, [x0, #16]\n  ldp x23, x24, [x0, #32]\n"
+                     "  ldp x25, x26, [x0, #48]\n  ldp x27, x28, [x0, #64]\n  ldp x29, x30, [x0, #80]\n"
+                     "  ldr x9, [x0, #96]\n  mov sp, x9\n  mov w0, #1\n  ret\n");
+}
+#else
+typedef void *pp_jmp[5];
+#define pp_setjmp(b) __builtin_setjmp(b)
+#define pp_longjmp(b, v) __builtin_longjmp(b, 1)   /* the builtin takes a constant */
+#endif
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -567,7 +586,7 @@ static void pp_ws(pparser *p) { while (p->i < p->n && isspace([p->s characterAtI
 static void pp_fail(pparser *p, const char *what) __attribute__((noreturn));
 static void pp_fail(pparser *p, const char *what) {
     snprintf(p->err, sizeof p->err, "%s at %lu", what, (unsigned long)p->i);
-    __builtin_longjmp(*p->jb, 1);
+    pp_longjmp(*p->jb, 1);
 }
 static BOOL pp_word(pparser *p, NSString *word) {     /* case-insensitive keyword followed by a non-identifier char */
     pp_ws(p);
@@ -837,7 +856,7 @@ static NSPredicate *pp_comparison(pparser *p) {
         /* parenthesized predicate, unless it is an arithmetic sub-expression */
         pp_jmp *outer = p->jb, local;
         p->jb = &local;
-        if (!__builtin_setjmp(local)) {
+        if (!pp_setjmp(local)) {
             NSPredicate *inner = pp_or(p);
             if (pp_sym(p, @")")) { p->jb = outer; return inner; }
         }
@@ -895,7 +914,7 @@ static void raise_parse_error(pparser *p) {
 static NSPredicate *parse_predicate(NSString *format, va_list *ap, NSArray *args) {
     pp_jmp top;
     pparser p = { format, 0, format.length, ap, args, 0, &top, "" };
-    if (__builtin_setjmp(top)) { raise_parse_error(&p); return nil; }
+    if (pp_setjmp(top)) { raise_parse_error(&p); return nil; }
     NSPredicate *pred = pp_or(&p);
     pp_ws(&p);
     if (p.i < p.n) pp_fail(&p, "unexpected trailing text");
@@ -905,7 +924,7 @@ static NSPredicate *parse_predicate(NSString *format, va_list *ap, NSArray *args
 + (NSExpression *)_isim_expressionWithFormat:(NSString *)format arguments:(va_list *)ap array:(NSArray *)args {
     pp_jmp top;
     pparser p = { format, 0, format.length, ap, args, 0, &top, "" };
-    if (__builtin_setjmp(top)) { raise_parse_error(&p); return nil; }
+    if (pp_setjmp(top)) { raise_parse_error(&p); return nil; }
     return pp_expr(&p);
 }
 @end
