@@ -134,7 +134,7 @@ ISIM_GUEST_ABI static void *d_mmap(void *addr, size_t len, int prot, int flags, 
 }
 ISIM_GUEST_ABI static int d_munmap(void *addr, size_t len) { return NETRET(munmap(addr, len)); }
 /* Darwin struct utsname: five 256-byte fields. Adapted: like Apple's Simulator, uname describes the Mac it runs on
-   (Darwin, x86_64), with the Linux host's name */
+   (Darwin, the host's machine type — x86_64 on an Intel Mac, arm64 on Apple silicon), with the Linux host's name */
 struct d_utsname { char sysname[256], nodename[256], release[256], version[256], machine[256]; };
 ISIM_GUEST_ABI static int d_uname(struct d_utsname *u) {
     struct utsname h;
@@ -144,14 +144,14 @@ ISIM_GUEST_ABI static int d_uname(struct d_utsname *u) {
     snprintf(u->nodename, 256, "%s", h.nodename);
     snprintf(u->release, 256, "24.0.0");
     snprintf(u->version, 256, "Darwin Kernel Version 24.0.0 (isim on Linux %s)", h.release);
-    snprintf(u->machine, 256, "x86_64");
+    snprintf(u->machine, 256, "%s", ISIM_ARCH_NAME);
     return 0;
 }
 
 /* ---------------- sysctl ---------------- */
-/* adapted: the names apps read about the device and the process, answered like Apple's Simulator on an Intel Mac
-   (hw.machine x86_64) with the host's CPU count and memory; kern.proc for the own process reports it is not being
-   debugged. Other names fail with ENOENT. */
+/* adapted: the names apps read about the device and the process, answered like Apple's Simulator with the host's
+   architecture (hw.machine is x86_64 on an Intel Mac, arm64 on Apple silicon) and its CPU count and memory; kern.proc
+   for the own process reports it is not being debugged. Other names fail with ENOENT. */
 static int sysctl_put(void *old, size_t *oldlen, const void *v, size_t n) {
     if (!oldlen) return 0;
     if (!old) { *oldlen = n; return 0; }
@@ -166,8 +166,14 @@ static int sysctl_named(const char *name, void *old, size_t *oldlen) {
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     struct sysinfo si; sysinfo(&si);
     int64_t mem = (int64_t)si.totalram * si.mem_unit;
-    if (!strcmp(name, "hw.machine")) return sysctl_str(old, oldlen, "x86_64");
-    if (!strcmp(name, "hw.model")) return sysctl_str(old, oldlen, "MacBookPro16,1");
+    if (!strcmp(name, "hw.machine")) return sysctl_str(old, oldlen, ISIM_ARCH_NAME);
+    if (!strcmp(name, "hw.model")) return sysctl_str(old, oldlen,
+#if defined(__aarch64__)
+        "Mac14,2"                                              /* what Apple's simulator reports on Apple silicon */
+#else
+        "MacBookPro16,1"
+#endif
+    );
     if (!strcmp(name, "hw.ncpu") || !strcmp(name, "hw.physicalcpu") || !strcmp(name, "hw.logicalcpu") ||
         !strcmp(name, "hw.activecpu") || !strcmp(name, "hw.physicalcpu_max") || !strcmp(name, "hw.logicalcpu_max"))
         return sysctl_int(old, oldlen, (int)ncpu);

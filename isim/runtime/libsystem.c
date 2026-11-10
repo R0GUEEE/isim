@@ -20,6 +20,8 @@
 #include <inttypes.h>
 #include <libgen.h>
 #include <linux/futex.h>
+
+#include "macho.h"      /* CPU_TYPE_HOST: the guest architecture is the host's */
 #include <malloc.h>
 #include <sys/syscall.h>
 #include <signal.h>

@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from isimtest import ISIM
+from isimtest import ISIM, GUEST_ARCH, SIM_TARGET
 
 HERE = Path(__file__).parent
 CC = os.environ.get("CLANG", "clang")
@@ -21,18 +21,18 @@ def binaries(tmp_path_factory):
         p = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         assert p.returncode == 0, f"{' '.join(map(str, cmd))}\n{p.stdout}"
 
-    for src, target, obj in [("hello.c", "x86_64-apple-ios15.0-simulator", "hello.sim.o"),
-                             ("hello.c", "arm64-apple-ios15.0", "hello.dev.o"),
-                             ("unimpl.c", "x86_64-apple-ios15.0-simulator", "unimpl.sim.o"),
-                             ("unimpl.c", "x86_64-apple-macos12.0", "unimpl.mac.o")]:
+    for src, target, obj in [("hello.c", SIM_TARGET, "hello.sim.o"),
+                             ("hello.c", f"{GUEST_ARCH}-apple-ios15.0", "hello.dev.o"),      # the device platform
+                             ("unimpl.c", SIM_TARGET, "unimpl.sim.o"),
+                             ("unimpl.c", f"{GUEST_ARCH}-apple-macos12.0", "unimpl.mac.o")]:
         sh(CC, "-target", target, *FLAGS, "-c", HERE / src, "-o", o / obj)
     tbd = HERE / "libSystem.tbd"
-    sim = ["-arch", "x86_64", "-platform_version", "ios-simulator", "15.0", "0"]
+    sim = ["-arch", GUEST_ARCH, "-platform_version", "ios-simulator", "15.0", "0"]
     sh(LD, *sim, "-o", o / "hello.sim", o / "hello.sim.o", tbd)
     sh(LD, *sim, "-fixup_chains", "-o", o / "hello.sim.chained", o / "hello.sim.o", tbd)
-    sh(LD, "-arch", "arm64", "-platform_version", "ios", "15.0", "0", "-o", o / "hello.dev", o / "hello.dev.o", tbd)
+    sh(LD, "-arch", GUEST_ARCH, "-platform_version", "ios", "15.0", "0", "-o", o / "hello.dev", o / "hello.dev.o", tbd)
     sh(LD, *sim, "-o", o / "unimpl.sim", o / "unimpl.sim.o", tbd)
-    sh(LD, "-arch", "x86_64", "-platform_version", "macos", "12.0", "0", "-o", o / "unimpl.macos", o / "unimpl.mac.o",
+    sh(LD, "-arch", GUEST_ARCH, "-platform_version", "macos", "12.0", "0", "-o", o / "unimpl.macos", o / "unimpl.mac.o",
        tbd)
     return o
 
@@ -40,7 +40,7 @@ def binaries(tmp_path_factory):
 @pytest.mark.parametrize("binary,want", [
     ("hello.sim", 42),
     ("hello.sim.chained", 42),
-    ("hello.dev", 127),        # arm64 device: refused
+    ("hello.dev", 127),        # the device platform: refused
     ("unimpl.macos", 127),     # macOS platform: refused
     ("unimpl.sim", 134),       # unimplemented import: named trap + abort (SIGABRT=134)
 ])

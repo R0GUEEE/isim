@@ -398,7 +398,7 @@ ISIM_GUEST_ABI static kern_return_t d_host_info(mach_port_name_t host, natural_t
         uint64_t mem = device_memory();
         struct __attribute__((packed, aligned(4))) { integer_t max_cpus, avail_cpus; natural_t memory_size; integer_t cpu_type, cpu_subtype, cpu_threadtype,
                  physical_cpu, physical_cpu_max, logical_cpu, logical_cpu_max; uint64_t max_mem; } b =
-            { ncpus(), ncpus(), (natural_t)(mem > 0x80000000ull ? 0x80000000ull : mem), 0x01000007 /* CPU_TYPE_X86_64 */, 3 /* _ALL */, 0,
+            { ncpus(), ncpus(), (natural_t)(mem > 0x80000000ull ? 0x80000000ull : mem), CPU_TYPE_HOST, 3 /* _ALL */, 0,
               ncpus(), ncpus(), ncpus(), ncpus(), mem };
         if (*count < 5) return M_KERN_FAILURE;                       /* HOST_BASIC_INFO_OLD_COUNT */
         natural_t give = *count < sizeof b / 4 ? 5 : sizeof b / 4;

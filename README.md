@@ -12,7 +12,7 @@ Goal: write → build → run in the simulator → device build → sign → upl
 
 ## Quick start (no build needed)
 
-Install the latest release (Linux x86_64, glibc 2.35+, with `python3`, `curl`, fontconfig and `adwaita-icon-theme`):
+Install the latest release (Linux x86_64 or arm64, glibc 2.35+, with `python3`, `curl`, fontconfig and `adwaita-icon-theme`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kolabs-dev/isim/main/install.sh | bash
@@ -58,7 +58,7 @@ isim run build/HelloWorld.app
 | `isim run App.app [args…]` | install, boot and open the app over the home screen (headless or `ISIM_STANDALONE=1`: the app alone) |
 | `isim reset` | erase installed apps, app data and settings |
 | `isim new NAME [--org com.example] [--uikit] [--tests] [-o DIR]` | create an app project like Xcode's iOS App template (SwiftUI or storyboards, optional unit and UI tests), ready for `isim build` and `isim test` |
-| `isim build (-project App.xcodeproj \| -workspace App.xcworkspace) [-scheme S \| -target T] [-configuration Release] [-o DIR]` | build an Xcode project or workspace: apps, extensions, frameworks, static libraries, Swift packages (remote ones fetched with git, pinned in `Package.resolved`), `.xcframework`s (x86_64 simulator slice), `.xcconfig` files, shell script phases, CocoaPods workspaces; products in `./build` of the current folder (or `-o DIR`), the last line is `done: <path to .app>` |
+| `isim build (-project App.xcodeproj \| -workspace App.xcworkspace) [-scheme S \| -target T] [-configuration Release] [-o DIR]` | build an Xcode project or workspace: apps, extensions, frameworks, static libraries, Swift packages (remote ones fetched with git, pinned in `Package.resolved`), `.xcframework`s (the host architecture's simulator slice), `.xcconfig` files, shell script phases, CocoaPods workspaces; products in `./build` of the current folder (or `-o DIR`), the last line is `done: <path to .app>` |
 | `isim build … -list` · `isim build … -showBuildSettings` (`-json`) · `isim project [App.xcodeproj]` | like `xcodebuild -list` / `-showBuildSettings`: targets, configurations, schemes / resolved build settings; the project as a tree (targets → build phases → files) |
 | `isim test -project App.xcodeproj -scheme S [-only-testing:Target/Class/test] [-resultBundlePath DIR]` | build and run the scheme's test targets like `xcodebuild test`: XCTest (hosted in the app or standalone), Swift Testing and XCUITest; exits 65 on failures. In a Swift package's folder (or `-package-path DIR`), `isim test -scheme <Package>` runs the package's `.testTarget`s with isim's iOS XCTest |
 | `isim cc …` · `isim swiftc …` · `isim metal-compile …` | compile files for the isim SDK (Metal Shading Language: for Metal on the CPU) |
@@ -154,7 +154,7 @@ API coverage is measured against Apple's documentation, per framework and per iO
 
 | Area | Status | Notes |
 |---|---|---|
-| Build for iOS on Linux | ✅ | clang/lld and Swift 6.2 produce iOS-simulator (x86_64) and device (arm64) Mach-O; `isim build` / `isim test` handle Xcode projects, workspaces, packages and XCTest / Swift Testing / XCUITest |
+| Build for iOS on Linux | ✅ | clang/lld and Swift 6.2 produce iOS-simulator (the host's architecture: x86_64 or arm64) and device (arm64) Mach-O; `isim build` / `isim test` handle Xcode projects, workspaces, packages and XCTest / Swift Testing / XCUITest |
 | Run simulator binaries | ✅ | own Mach-O loader, libSystem, Objective-C and Swift runtimes, Foundation; apps keep running across isim updates (ABI checked); Swift apps built before 0.12 need one rebuild (the base Swift overlays became resilient), and SwiftUI apps built before 0.36 that use a built-in button style (`.buttonStyle(.plain)`, `.bordered`, …) need one too |
 | UIKit · SwiftUI | 🟡 | broad coverage, including storyboards and SwiftUI navigation, presentation and effects; SwiftUI is isim's own implementation |
 | Device | ✅ | home screen (pages, folders, App Library, Spotlight, widgets), lock screen, Notification Center, Control Center, app switcher, Settings; 12 iPhones and 4 iPads; iOS 17, 18, 26 and 27 |

@@ -88,8 +88,11 @@ follows these rules, and the check enforces them.
 
   A service it lacks is added there: a declaration in `platform.h` saying what it does (not how), and the Linux code in
   `platform_posix.c`. Another host then implements the same list in its own file.
-- **The guest ABI boundary.** Guest code calls host functions with the System V x86-64 convention (Darwin's), which is
-  Linux's too but not Windows'. `runtime/guest_abi.h` (included by `runtime.h`) defines:
+- **The guest ABI boundary.** Guest code is the host's own machine code, so the ABI follows the host: on x86-64 the
+  System V convention (Darwin's), which is Linux's too but not Windows'; on arm64 AAPCS64 (Darwin's), which is Linux's
+  too, with one difference that needs bridging — Apple passes every variadic argument on the stack, where AAPCS64
+  passes the first eight in registers. `runtime.h` (isim_va_from_darwin) builds a Linux va_list that reads Darwin's
+  stack slots, and each guest-facing variadic function in `runtime/` is a front end that hands `sp` to its body. `runtime/guest_abi.h` (included by `runtime.h`) defines:
   - `ISIM_GUEST_ABI`: at the start of the definition and of every prototype of a host function a symbol table
     (`struct shim`: libSystem, libobjc, libisim_host…) hands to guests, e.g. `ISIM_GUEST_ABI static int d_open(...)`. A
     macro that makes such functions puts it in the macro. Passthrough entries (`P(name)`: the host C library's own

@@ -29,6 +29,7 @@ import glob
 import gzip
 import json
 import os
+import platform
 import re
 import ssl
 import subprocess
@@ -37,6 +38,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+
+# the guest architecture is the host's: isim runs the simulator SDK natively (buildlib/arch.py)
+GUEST_ARCH = "arm64" if platform.machine().lower() in ("aarch64", "arm64") else "x86_64"
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))     # isim/
 REPO = os.path.dirname(ROOT)
 DATA = os.path.join(ROOT, 'data')
@@ -351,7 +355,7 @@ def extract_symbol_graphs(sdk, modules, outdir):
         d = os.path.join(outdir, m)
         os.makedirs(d, exist_ok=True)
         if not glob.glob(f'{d}/*.symbols.json'):
-            cmd = [*extract, '-target', 'x86_64-apple-ios27.0-simulator', '-sdk', sdk, '-resource-dir', f'{out_root}/swift/resource',
+            cmd = [*extract, '-target', f'{GUEST_ARCH}-apple-ios27.0-simulator', '-sdk', sdk, '-resource-dir', f'{out_root}/swift/resource',
                    '-I', f'{sdk}/usr/lib/swift', '-F', f'{sdk}/System/Library/Frameworks',
                    '-module-name', m, '-minimum-access-level', 'public', '-output-dir', d]
             r = subprocess.run(cmd, capture_output=True, text=True)

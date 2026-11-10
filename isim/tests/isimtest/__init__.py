@@ -15,6 +15,7 @@ from __future__ import annotations
 import errno
 import fcntl
 import os
+import platform
 import re
 import shutil
 import signal
@@ -22,6 +23,11 @@ import subprocess
 import tempfile
 import threading
 import time
+# The guest architecture is the host's: isim runs the simulator SDK's Mach-O natively (buildlib/arch.py), so a test that
+# compiles guest code itself targets ARCH — on an x86-64 host x86_64, on an arm64 host arm64.
+GUEST_ARCH = "arm64" if platform.machine().lower() in ("aarch64", "arm64") else "x86_64"
+SIM_TARGET = f"{GUEST_ARCH}-apple-ios15.0-simulator"
+
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path

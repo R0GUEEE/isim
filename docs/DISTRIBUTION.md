@@ -71,7 +71,7 @@ Notes:
 
 | Step | State |
 |---|---|
-| arm64 device executables (clang + ld64.lld) | arm64 Mach-O without frameworks links; apps cannot (isim's frameworks are x86_64 simulator code, and Apple's device frameworks are off limits) |
+| arm64 device executables (clang + ld64.lld) | arm64 Mach-O without frameworks links; apps cannot (isim's frameworks are simulator code for the host architecture, and Apple's device frameworks are off limits) |
 | `.app` bundle, `Assets.car`, entitlements | not done; clean-room `Assets.car` writers exist but have no proof of passing App Store checks |
 | Distribution signing | not done; candidates rcodesign, zsign (no documented App Store acceptance) |
 | `.ipa` | not done (a zip with `Payload/App.app`) |

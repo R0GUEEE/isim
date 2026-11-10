@@ -112,12 +112,63 @@ static void emit_fde(struct buf *b, size_t cie, uint64_t pc, uint64_t len, uint6
     uint32_t l = (uint32_t)(b->n - start - 4); memcpy(b->p + start, &l, 4);
 }
 
+#if !defined(__aarch64__)
 /* DWARF register numbers for compact unwind's register codes (1 rbx, 2 r12, 3 r13, 4 r14, 5 r15, 6 rbp) */
 static const uint8_t dwreg[7] = { 0, 3, 12, 13, 14, 15, 6 };
+#endif
 static int ins_uleb(uint8_t *o, uint64_t v) { int n = 0; do { uint8_t c = v & 0x7f; v >>= 7; if (v) c |= 0x80; o[n++] = c; } while (v); return n; }
 
-/* CFA instructions equivalent to an x86_64 compact unwind encoding (frame state at call sites) */
+/* arm64 compact unwind encodings (Apple's compact_unwind_encoding.h): a frame record {fp, lr} at [fp], the saved
+   register pairs below it, or a frameless function with a stack size in 16-byte units. */
+#define CU_ARM64_MODE_MASK 0x0f000000u
+#define CU_ARM64_MODE_FRAMELESS 0x02000000u
+#define CU_ARM64_MODE_DWARF 0x03000000u
+#define CU_ARM64_MODE_FRAME 0x04000000u
+#define CU_ARM64_X_PAIRS 0x0000001fu          /* x19/x20 … x27/x28, nearest fp first */
+#define CU_ARM64_D_PAIRS 0x00000f00u          /* d8/d9 … d14/d15 */
+#define CU_ARM64_STACK_SIZE 0x00fff000u       /* frameless: 16-byte units */
+
+/* CFA instructions equivalent to an arm64 compact unwind encoding (frame state at call sites): DWARF's x0-x30 =
+ * 0-30, sp = 31, v0-v31 = 64-95 (so d8-d15 are 72-79) */
+static int compact_to_cfa_arm64(uint32_t enc, uint8_t *o) {
+    int n = 0;
+    switch (enc & CU_ARM64_MODE_MASK) {
+    case CU_ARM64_MODE_FRAME: {
+        o[n++] = 0x0c; o[n++] = 29; o[n++] = 16;             /* DW_CFA_def_cfa: fp + 16 */
+        o[n++] = 0x80 | 29; o[n++] = 2;                      /* fp at cfa-16 */
+        o[n++] = 0x80 | 30; o[n++] = 1;                      /* lr at cfa-8 */
+        int k = 0;
+        for (int i = 0; i < 5; i++)
+            if (enc & (1u << i)) {                          /* x(19+2i), x(20+2i) */
+                int r = 19 + 2 * i;
+                o[n++] = (uint8_t)(0x80 | r);     n += ins_uleb(o + n, 32 + 16 * k);
+                o[n++] = (uint8_t)(0x80 | (r + 1)); n += ins_uleb(o + n, 24 + 16 * k);
+                k++;
+            }
+        for (int i = 0; i < 4; i++)
+            if (enc & (0x100u << i)) {                      /* d(8+2i), d(9+2i) */
+                int r = 64 + 8 + 2 * i;
+                o[n++] = (uint8_t)(0x80 | r);     n += ins_uleb(o + n, 32 + 16 * k);
+                o[n++] = (uint8_t)(0x80 | (r + 1)); n += ins_uleb(o + n, 24 + 16 * k);
+                k++;
+            }
+        return n;
+    }
+    case CU_ARM64_MODE_FRAMELESS: {
+        uint64_t size = ((enc & CU_ARM64_STACK_SIZE) >> 12) * 16;
+        o[n++] = 0x0e; n += ins_uleb(o + n, size);           /* DW_CFA_def_cfa_offset (sp, from the CIE) */
+        return n;
+    }
+    default: return -1;                                      /* DWARF mode: the __eh_frame FDE is used instead */
+    }
+}
+
+/* CFA instructions equivalent to a compact unwind encoding (frame state at call sites) */
 static int compact_to_cfa(uint32_t enc, uint64_t func, uint8_t *o) {
+#if defined(__aarch64__)
+    (void)func;                                             /* arm64 encodes everything in the word */
+    return compact_to_cfa_arm64(enc, o);
+#else
     int n = 0;
     switch ((enc >> 24) & 0xf) {
     case 1: {   /* UNWIND_X86_64_MODE_RBP_FRAME: push rbp; mov rsp, rbp; regs saved below rbp */
@@ -156,6 +207,7 @@ static int compact_to_cfa(uint32_t enc, uint64_t func, uint8_t *o) {
     }
     default: return -1;
     }
+#endif
 }
 
 /* re-encode one FDE (and its CIE) of the image's own __eh_frame with absolute pointers */
@@ -233,7 +285,12 @@ static void register_image(int idx) {
             } else break;
             if (!enc || fend <= foff) continue;
             uint64_t func = (uint64_t)(uintptr_t)(base + foff);
-            if (((enc >> 24) & 0xf) == 4) {        /* UNWIND_X86_64_MODE_DWARF: FDE in __eh_frame */
+#if defined(__aarch64__)
+            const unsigned dwarf_mode = 3;         /* UNWIND_ARM64_MODE_DWARF */
+#else
+            const unsigned dwarf_mode = 4;         /* UNWIND_X86_64_MODE_DWARF */
+#endif
+            if (((enc >> 24) & 0xf) == dwarf_mode) {   /* the FDE is in __eh_frame */
                 if (eh) { convert_dwarf_fde(&b, eh + (enc & 0xffffff), eh, ehsize); nfde++; }
                 continue;
             }

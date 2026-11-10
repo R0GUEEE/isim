@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from isimtest import APPS, DEFAULT_DEVICE, ISIM, ROOT, exclusive, need_apps
+from isimtest import APPS, DEFAULT_DEVICE, ISIM, ROOT, exclusive, need_apps, GUEST_ARCH
 
 PROJ = ROOT / "samples/HelloToolchain"
 WORK = ROOT / "out/projects/HelloToolchain"                    # shared build products (incremental across runs)
@@ -204,8 +204,8 @@ def test_arm64_only_xcframework_rejected(tmp_path):
             "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); m.xcframework_slice(sys.argv[2])")
     out = subprocess.run([sys.executable, "-c", code, str(ROOT / "out/bin/isim-build.py"), str(arm)],
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout
-    assert "Arm.xcframework has no x86_64 iOS-simulator slice (it has: ios-arm64 (arm64), ios-arm64_arm64-simulator (arm64))" \
-        in out, out
+    assert f"Arm.xcframework has no {GUEST_ARCH} iOS-simulator slice (it has: ios-arm64 (arm64), " \
+           "ios-arm64_arm64-simulator (arm64))" in out, out
 
 
 def test_package_tests(device_data, tmp_path):

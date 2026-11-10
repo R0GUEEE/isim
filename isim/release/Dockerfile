@@ -1,5 +1,7 @@
 # Release build environment for isim's host runtime: Ubuntu 22.04 (glibc 2.35) so the bundled
-# binary runs on most current Linux distributions. SDL3 is built from source (not packaged in 22.04), and so is
+# binary runs on most current Linux distributions. Built for the host architecture: the image the Release workflow
+# builds on x86-64 and arm64 runners produces that architecture's tarball (the guest SDK follows the host, so a
+# release is always one architecture — dist/isim-VERSION-linux-{x86_64,aarch64}.tar.gz). SDL3 is built from source (not packaged in 22.04), and so is
 # HarfBuzz: 22.04 ships 2.7.4, the runtime needs the draw / style / COLRv1 API (>= 7.0; CI's Ubuntu 24.04 has 8.3.0).
 # It installs to /usr/local, ahead of the system copy for pkg-config and ld.so, and is bundled as lib/libharfbuzz.so.0.
 FROM ubuntu:22.04
@@ -19,6 +21,6 @@ RUN git clone --depth 1 --branch ${SDL_TAG} https://github.com/libsdl-org/SDL.gi
 ARG HARFBUZZ_TAG=8.3.0
 RUN git clone --depth 1 --branch ${HARFBUZZ_TAG} https://github.com/harfbuzz/harfbuzz.git /src/harfbuzz \
     && CC=gcc-12 CXX=g++-12 meson setup /src/harfbuzz/build /src/harfbuzz --buildtype=release --prefix=/usr/local \
-         --libdir=lib/x86_64-linux-gnu -Dfreetype=enabled -Dglib=enabled -Dgobject=disabled -Dcairo=disabled \
+         --libdir=lib/$(gcc -dumpmachine) -Dfreetype=enabled -Dglib=enabled -Dgobject=disabled -Dcairo=disabled \
          -Dchafa=disabled -Dicu=disabled -Dtests=disabled -Dintrospection=disabled -Ddocs=disabled -Dutilities=disabled \
     && ninja -C /src/harfbuzz/build install && ldconfig

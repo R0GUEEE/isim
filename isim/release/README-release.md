@@ -1,11 +1,12 @@
-# isim for Linux (x86_64)
+# isim for Linux (x86_64 or arm64)
 
-isim is an iOS-compatible simulator for Linux: it runs iOS-simulator (x86_64) apps built with isim's own SDK, with a
+isim is an iOS-compatible simulator for Linux: it runs iOS-simulator apps built with isim's own SDK — the guest code is the host's own architecture, x86_64 on an
+Intel machine and arm64 on an AArch64 one, as in Apple's simulator — with a
 home screen and a Settings app, and builds Xcode projects. It is an independent re-implementation, not Apple software.
 
 ## Requirements
 
-- Linux x86_64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch, …), a Wayland or X11 desktop (not
+- Linux x86_64 or arm64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch, …), a Wayland or X11 desktop (not
   needed headless), `python3`, `fontconfig` with a sans-serif font ("Adwaita Sans" or "Inter" look closest to iOS)
   and `adwaita-icon-theme` (stand-ins for some SF Symbols).
 - Loaded only when an app needs them: SQLite, OpenSSL 3, libcurl, PCRE2, `ffmpeg`, `espeak-ng`, `poppler-glib`,
