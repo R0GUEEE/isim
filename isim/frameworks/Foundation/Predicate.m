@@ -20,7 +20,7 @@ __attribute__((naked)) static int pp_setjmp(void **b) {
                      "  stp x25, x26, [x0, #48]\n  stp x27, x28, [x0, #64]\n  stp x29, x30, [x0, #80]\n"
                      "  mov x9, sp\n  str x9, [x0, #96]\n  mov w0, #0\n  ret\n");
 }
-__attribute__((naked)) static void pp_longjmp(void **b, int v) {
+__attribute__((naked, noreturn)) static void pp_longjmp(void **b, int v) {
     __asm__ volatile("ldp x19, x20, [x0]\n  ldp x21, x22, [x0, #16]\n  ldp x23, x24, [x0, #32]\n"
                      "  ldp x25, x26, [x0, #48]\n  ldp x27, x28, [x0, #64]\n  ldp x29, x30, [x0, #80]\n"
                      "  ldr x9, [x0, #96]\n  mov sp, x9\n  mov w0, #1\n  ret\n");
