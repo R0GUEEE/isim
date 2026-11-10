@@ -556,6 +556,11 @@ void *isim_tlv_addr(struct tlv_desc *d) {
     }
     return block + d->offset;
 }
+#if defined(__aarch64__)
+/* the descriptor's thunk is called with x0 = the descriptor and returns the address: an ordinary call, so a tail
+   call to the C function is the whole stub */
+__asm__(".text\n.globl isim_tlv_get_addr\n.type isim_tlv_get_addr,%function\nisim_tlv_get_addr:\n  b isim_tlv_addr\n");
+#else
 __asm__(
     ".text\n.globl isim_tlv_get_addr\n.type isim_tlv_get_addr,@function\nisim_tlv_get_addr:\n"
     "  push %rbp\n  mov %rsp, %rbp\n  sub $0x150, %rsp\n  and $-16, %rsp\n"
@@ -573,6 +578,7 @@ __asm__(
     "  movdqa 0xc0(%rsp), %xmm8\n  movdqa 0xd0(%rsp), %xmm9\n  movdqa 0xe0(%rsp), %xmm10\n  movdqa 0xf0(%rsp), %xmm11\n"
     "  movdqa 0x100(%rsp), %xmm12\n  movdqa 0x110(%rsp), %xmm13\n  movdqa 0x120(%rsp), %xmm14\n  movdqa 0x130(%rsp), %xmm15\n"
     "  mov %rbp, %rsp\n  pop %rbp\n  ret\n");
+#endif
 void isim_tlv_get_addr(void);
 
 static void setup_tlv(struct image *im) {

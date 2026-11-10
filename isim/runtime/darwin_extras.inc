@@ -504,6 +504,9 @@ ISIM_GUEST_ABI static char *d_strptime_l(const char *s, const char *f, struct tm
  * (runtime.h, isim_va_from_darwin), so each variadic function is a front end handing sp to a body plus the body, and
  * each v* function takes that pointer; x86-64 keeps the direct passthroughs. */
 #if defined(__aarch64__)
+/* the front ends are assembly (below): C only needs their names for the symbol table */
+void d_snprintf_l(void); void d_sprintf_l(void); void d_asprintf_l(void); void d_sscanf_l(void);
+void d_printf_l(void); void d_fprintf_l(void);    /* (the v* variants are C functions, below) */
 ISIM_ASM_CALLEE int d_snprintf_l_v(char *s, size_t n, locale_t l, const char *f, void *sp);
 ISIM_ASM_CALLEE int d_sprintf_l_v(char *s, locale_t l, const char *f, void *sp);
 ISIM_ASM_CALLEE int d_asprintf_l_v(char **s, locale_t l, const char *f, void *sp);

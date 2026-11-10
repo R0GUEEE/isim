@@ -439,9 +439,11 @@ ISIM_GUEST_ABI static void d_openlog(const char *ident, int opts, int facility) 
 ISIM_GUEST_ABI static void d_closelog(void) { syslog_ident[0] = 0; syslog_opts = 0; }
 ISIM_GUEST_ABI static int d_setlogmask(int mask) { int old = syslog_mask; if (mask) syslog_mask = mask; return old; }
 #if defined(__aarch64__)
-#define d_vsyslog d_vsyslog_impl     /* the arm64 front end below owns the guest-facing name */
+#define SYSLOG_IMPL d_vsyslog_impl      /* the arm64 front end below owns the guest-facing name */
+#else
+#define SYSLOG_IMPL d_vsyslog
 #endif
-ISIM_GUEST_ABI static void d_vsyslog(int pri, const char *fmt, va_list ap) {
+ISIM_GUEST_ABI static void SYSLOG_IMPL(int pri, const char *fmt, va_list ap) {
     if (!(syslog_mask & (1 << (pri & 7)))) return;
     int saved = errno;
     char f[2048], msg[4096];
@@ -492,7 +494,7 @@ __asm__(".text\n"
         ".globl d_vwprintf\n.type d_vwprintf,%function\nd_vwprintf:\n  b d_vwprintf_c\n"
         ".globl d_vfwprintf\n.type d_vfwprintf,%function\nd_vfwprintf:\n  b d_vfwprintf_c\n");
 #else
-ISIM_GUEST_ABI static void d_syslog(int pri, const char *fmt, ...) { va_list ap; va_start(ap, fmt); d_vsyslog(pri, fmt, ap); va_end(ap); }
+ISIM_GUEST_ABI static void d_syslog(int pri, const char *fmt, ...) { va_list ap; va_start(ap, fmt); SYSLOG_IMPL(pri, fmt, ap); va_end(ap); }
 #endif
 
 /* ---------------- pwd.h: the device's one user ---------------- */
