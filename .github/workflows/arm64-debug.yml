@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/swift-toolchain
-          key: ${{ env.SWIFT_KEY }}
+          key: swift-6.2.4-ubuntu24.04-aarch64      # arm64.yml's SWIFT_KEY
       - name: One test
         run: |
           docker run --rm -v "$PWD:$PWD" -w "$PWD" \
