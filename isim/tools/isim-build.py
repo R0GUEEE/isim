@@ -68,6 +68,7 @@ It never writes Xcode/SDK identity keys (DTXcode, DTSDKName, ...): products are 
 import argparse
 import json
 import os
+import platform
 import plistlib
 import re
 import shlex
