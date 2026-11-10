@@ -69,7 +69,10 @@ struct rt_class {
     int swift_inited;                          /* RO_HAS_SWIFT_INITIALIZER: the Swift metadata initializer ran */
 };
 
-#define FAST_DATA_MASK 0x00007ffffffffff8ull
+/* Apple masks the class data pointer to 47 bits (and leaves the low three bits for the Swift/class flags). Linux
+ * loads a PIE executable above that on arm64 (a base like 0xaab1_0000_0000), so that mask would truncate the pointer:
+ * keep every address bit and clear only the flags, which is what the mask is for. */
+#define FAST_DATA_MASK (~(uintptr_t)7)
 #define RO_META 0x1
 #define RO_HAS_SWIFT_INITIALIZER 0x40            /* class_ro_t is followed by the Swift metadata initializer */
 #define SMALL_METHOD_LIST 0x80000000u
