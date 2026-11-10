@@ -7,14 +7,26 @@ built with an older isim keep running.
 
 Baselines list "<binary path inside the SDK> <symbol>" for the dylibs under usr/lib and the framework binaries
 under System/Library/Frameworks. A symbol a binary re-exports from another library (LC_REEXPORT_DYLIB) counts as
-exported by it, as the loader resolves it there. abi/allowlist.txt names symbols that were deliberately dropped (one
+exported by it, as the loader resolves it there. A baseline belongs to one architecture (a release is one
+architecture, and e.g. Swift's __VaListBuilder exists on x86-64 only): vX.Y.Z.txt.gz is x86_64's, vX.Y.Z-arm64.txt.gz
+arm64's, and a build only compares against its own. abi/allowlist.txt names symbols that were deliberately dropped (one
 "<binary path> <symbol>" per line, '#' comments say why); keep it short. abi/epochs.txt names binaries whose ABI broke
 on purpose ("<binary path> <version>": baselines older than that version are not checked for that binary; apps built
 with them must be rebuilt)."""
-import gzip, os, subprocess, sys
+import gzip, os, platform, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ABI = os.path.join(ROOT, 'abi')
+# A baseline belongs to one architecture: a release is built for one (the guest ABI is the host's), and Swift's own
+# runtime exports differ between them (x86-64 has __VaListBuilder, arm64 does not). The files recorded before isim
+# built for arm64 carry no suffix and are x86_64's; a baseline recorded on arm64 is vX.Y.Z-arm64.txt.gz.
+ARCH = 'arm64' if platform.machine().lower() in ('aarch64', 'arm64') else 'x86_64'
+
+
+def baseline_arch(name):
+    """the architecture a baseline belongs to: the '-' suffix, or x86_64 for the historical files"""
+    stem = name[:-len('.txt.gz')]
+    return stem.rsplit('-', 1)[1] if '-' in stem else 'x86_64'
 
 
 def binaries(sdk):
@@ -74,7 +86,7 @@ def main(argv):
     if argv[:1] == ['--record']:
         ver, sdk = argv[1], (argv[2] if len(argv) > 2 else os.path.join(ROOT, 'out', 'sdk'))
         syms = exports(sdk)
-        path = os.path.join(ABI, f'v{ver}.txt.gz')
+        path = os.path.join(ABI, f'v{ver}.txt.gz' if ARCH == 'x86_64' else f'v{ver}-{ARCH}.txt.gz')
         with gzip.open(path, 'wt') as f:
             f.write(''.join(s + '\n' for s in sorted(syms)))
         print(f'abi: recorded {len(syms)} symbols -> {os.path.relpath(path, ROOT)}')
@@ -93,10 +105,12 @@ def main(argv):
                 epochs[l[0]] = version(l[1])
     now = exports(sdk, follow_reexports=True)
     bad = 0
+    seen = 0
     for name in sorted(os.listdir(ABI)):
-        if not name.endswith('.txt.gz'):
-            continue
-        ver = version(name[1:-7])
+        if not name.endswith('.txt.gz') or baseline_arch(name) != ARCH:
+            continue                                     # another architecture's history
+        seen += 1
+        ver = version(name[1:-len('.txt.gz')].split('-')[0])
         with gzip.open(os.path.join(ABI, name), 'rt') as f:
             base = {l.rstrip('\n') for l in f if l.strip() and not ver < epochs.get(l.split(' ', 1)[0], ver)}
         missing = sorted(base - now - allow)
@@ -106,6 +120,9 @@ def main(argv):
         if len(missing) > 40:
             print(f'  ... and {len(missing) - 40} more')
         bad += len(missing)
+    if not seen:
+        print(f'abi: no {ARCH} baseline yet (the next release records one; the x86_64 history does not apply)')
+        return 0
     print('abi check: ' + ('OK' if not bad else f'FAILED ({bad} missing; restore them, or break on purpose: abi/allowlist.txt or abi/epochs.txt, see AGENTS.md)'))
     return 1 if bad else 0
 
