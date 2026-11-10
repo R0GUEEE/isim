@@ -76,10 +76,12 @@ jobs:
       - name: Debug (crash backtrace)
         if: failure()
         run: |
-          docker run --rm -v "$PWD:$PWD" -w "$PWD" isim-ci sh -c '
+          docker run --rm -v "$PWD:$PWD" -w "$PWD" -e CI=1 isim-ci sh -c '
+            ls -l out/bin/isim-runtime || true; file out/bin/isim-runtime 2>/dev/null || true
+            readelf -l out/bin/isim-runtime 2>/dev/null | grep -A1 interpreter || true
+            ldd out/bin/isim-runtime 2>&1 | head -20
             apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq gdb >/dev/null 2>&1
-            echo "--- direct run:"; out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | head -5; echo "rc=$?"
-            echo "--- gdb:"; gdb -batch -ex run -ex "bt 12" --args out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | tail -30' || true
+            echo "--- gdb:"; gdb -batch -ex run -ex "bt 15" --args out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | tail -40' || true
       - name: File ownership
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" isim/out third_party || true
