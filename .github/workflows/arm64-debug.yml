@@ -1,0 +1,59 @@
+# One test, one crash report: the arm64 port's runtime work is judged by running guest code, and this prints why an app
+# dies without waiting for the whole suite.
+name: arm64-debug
+on:
+  push:
+    branches: [arm64]
+    paths-ignore: ['.github/workflows/arm64.yml', 'docs/**', '**/*.md']
+  workflow_dispatch:
+jobs:
+  one:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - name: CI image
+        uses: docker/build-push-action@v7
+        with:
+          context: isim/ci
+          load: true
+          tags: isim-ci
+          cache-from: type=gha,scope=arm64-ci
+      - name: Build (from the last arm64 build)
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            isim/out
+            !isim/out/pytest
+            !isim/out/test-*
+          key: build-arm64-nocache
+          restore-keys: build-arm64-
+      - name: Swift toolchain
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/swift-toolchain
+          key: ${{ env.SWIFT_KEY }}
+      - name: One test
+        run: |
+          docker run --rm -v "$PWD:$PWD" -w "$PWD" \
+            -v "$HOME/swift-toolchain:$HOME/swift-toolchain:ro" -e ISIM_SWIFT_TOOLCHAIN="$HOME/swift-toolchain" \
+            -e CI=1 -e ISIM_WAIT_SCALE=3 isim-ci python3 isim/build.py test -k "uttypes" || true
+      - name: Crash reports
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" isim/out || true
+          for f in $(find isim/out -name '*.ips' | head -2); do
+            echo "=== $f"; head -c 6000 "$f"; echo
+            python3 - "$f" <<'PY'
+import json, sys
+raw = open(sys.argv[1]).read()
+body = raw[raw.index('\n') + 1:]
+d = json.loads(body)
+print('exception:', d.get('exception'), d.get('termination', {}).get('indicator'))
+for t in d.get('threads', [])[:1]:
+    for fr in t.get('frames', [])[:24]:
+        print('   ', fr.get('imageIndex'), hex(fr.get('imageOffset', 0)), fr.get('symbol', ''))
+print('images:', [i.get('name') for i in d.get('usedImages', [])][:12])
+PY
+          done
