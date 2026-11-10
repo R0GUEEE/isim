@@ -72,6 +72,14 @@ jobs:
           docker run --rm -v "$PWD:$PWD" -w "$PWD" \
             -v "$HOME/swift-toolchain:$HOME/swift-toolchain:ro" -e ISIM_SWIFT_TOOLCHAIN="$HOME/swift-toolchain" \
             -e CI=1 isim-ci python3 isim/build.py ci build
+      # a failing build leaves the runtime binary behind: run it under gdb to see where it faults
+      - name: Debug (crash backtrace)
+        if: failure()
+        run: |
+          docker run --rm -v "$PWD:$PWD" -w "$PWD" isim-ci sh -c '
+            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq gdb >/dev/null 2>&1
+            echo "--- direct run:"; out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | head -5; echo "rc=$?"
+            echo "--- gdb:"; gdb -batch -ex run -ex "bt 12" --args out/bin/isim-runtime --print-exports /usr/lib/libSystem.B.dylib 2>&1 | tail -30' || true
       - name: File ownership
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" isim/out third_party || true
