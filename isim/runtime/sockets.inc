@@ -310,10 +310,10 @@ static short lock_type_host(short t) { return t == 1 ? F_RDLCK : t == 3 ? F_WRLC
 static short lock_type_darwin(short t) { return t == F_RDLCK ? 1 : t == F_WRLCK ? 3 : 2; }
 #if defined(__aarch64__)
 /* fcntl/ioctl are variadic in Darwin's headers: their third argument is on the guest's stack (arm64), not in x2 */
-ISIM_ASM_CALLEE int d_fcntl_c(int fd, int cmd, long arg);
+ISIM_ASM_CALLEE static int d_fcntl_c(int fd, int cmd, long arg);
 __asm__(".text\n.globl d_fcntl\n.type d_fcntl,%function\nd_fcntl:\n  ldr x2, [sp]\n  b d_fcntl_c\n");
 #define d_fcntl d_fcntl_c
-ISIM_ASM_CALLEE int d_ioctl_c(int fd, unsigned long req, void *arg);
+ISIM_ASM_CALLEE static int d_ioctl_c(int fd, unsigned long req, void *arg);
 __asm__(".text\n.globl d_ioctl\n.type d_ioctl,%function\nd_ioctl:\n  ldr x2, [sp]\n  b d_ioctl_c\n");
 #define d_ioctl d_ioctl_c
 #endif

@@ -61,10 +61,10 @@ static int open_locks(int fd, int dflags) {
 }
 #if defined(__aarch64__)
 /* open(path, flags, ...): the mode is variadic, so on arm64 it arrives in the guest's first stack slot, not in x2 */
-ISIM_ASM_CALLEE int d_open_c(const char *path, int dflags, int mode);
+ISIM_ASM_CALLEE static int d_open_c(const char *path, int dflags, int mode);
 __asm__(".text\n.globl d_open\n.type d_open,%function\nd_open:\n  ldr w2, [sp]\n  b d_open_c\n");
 #define d_open d_open_c
-ISIM_ASM_CALLEE int d_openat_c(int dirfd, const char *path, int dflags, int mode);
+ISIM_ASM_CALLEE static int d_openat_c(int dirfd, const char *path, int dflags, int mode);
 __asm__(".text\n.globl d_openat\n.type d_openat,%function\nd_openat:\n  ldr w3, [sp]\n  b d_openat_c\n");
 #define d_openat d_openat_c
 #endif
@@ -532,6 +532,11 @@ void libsystem_init(int argc, char **argv) {
 #if defined(__aarch64__)
 #define V(n) A("_" #n, d_##n)
 #define L(n) A("_" #n, d_##n)
+/* the front ends are assembly (below): C only needs their names for the symbol table */
+void d_printf(void); void d_fprintf(void); void d_snprintf(void); void d_sprintf(void); void d_asprintf(void);
+void d_sscanf(void); void d_scanf(void); void d_fscanf(void);
+void d_vprintf(void); void d_vfprintf(void); void d_vsnprintf(void); void d_vsprintf(void); void d_vasprintf(void);
+void d_vsscanf(void); void d_vscanf(void); void d_vfscanf(void);
 ISIM_ASM_CALLEE int d_printf_v(const char *f, void *sp) { va_list ap; isim_va_from_darwin(&ap, sp); return vprintf(f, ap); }
 __asm__(".text\n"
         ".globl d_printf\n.type d_printf,%function\nd_printf:\n  mov x1, sp\n  b d_printf_v\n");

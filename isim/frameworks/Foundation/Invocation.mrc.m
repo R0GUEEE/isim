@@ -14,6 +14,15 @@
 #include <stdio.h>
 #include <signal.h>
 
+/* Apple's two ABIs: x86-64 System V on an Intel host, AAPCS64 (Apple's flavour) on an arm64 one. The guest code is the
+ * host's own machine code, so this file is compiled for the guest's architecture and selects the same one
+ * (buildlib/arch.py). */
+#if defined(__arm64__) || defined(__aarch64__)
+#define ISIM_ARM64 1
+#else
+#define ISIM_ARM64 0
+#endif
+
 /* ================= type encodings ================= */
 enum { CLS_NONE = 0, CLS_INT = 1, CLS_SSE = 2 };
 typedef struct {
@@ -23,6 +32,7 @@ typedef struct {
     BOOL memory;             /* passed in memory (on the stack) / returned through the hidden pointer */
     int nwords;              /* eightbytes when passed in registers */
     int cls[2];
+    int hfa, hn;             /* arm64: homogeneous floating-point aggregate (0 no, 1 float, 2 double), members */
 } isim_arginfo;
 
 static const char *skip_quals(const char *t) { while (*t && strchr("rnNoORVA", *t)) t++; return t; }
@@ -67,7 +77,11 @@ static void layout(const char *t, NSUInteger *size, NSUInteger *align, NSUIntege
     case 'q': case 'Q': case '@': case '#': case ':': case '*': case '^': case '?': s = a = 8; kind = CLS_INT; break;
     case 'f': s = a = 4; kind = CLS_SSE; break;
     case 'd': s = a = 8; kind = CLS_SSE; break;
+#if ISIM_ARM64
+    case 'D': s = a = 8; kind = CLS_SSE; break;              /* iOS arm64: long double is double */
+#else
     case 'D': s = a = 16; if (memory) *memory = YES; break;
+#endif
     case 't': case 'T': s = a = 16; kind = CLS_INT; break;
     case 'v': s = 0; a = 1; break;
     case 'b': { long bits = strtol(t + 1, NULL, 10); s = (NSUInteger)(bits + 7) / 8; a = 1; kind = CLS_INT; break; }
@@ -107,13 +121,54 @@ static void layout(const char *t, NSUInteger *size, NSUInteger *align, NSUIntege
         if (base + s > 16 && memory) *memory = YES;
     }
 }
+#if ISIM_ARM64
+/* arm64 (Apple's ABI): an aggregate of up to four members that are all float or all double is homogeneous and goes in
+ * v registers whatever its size (CGRect is four doubles); anything else of more than 16 bytes is copied to memory. A
+ * bare float or double is the one-member case of the same rule. */
+static BOOL hfa_walk(const char *t, int *kind, int *n) {
+    t = skip_quals(t);
+    switch (*t) {
+    case 'f': if (*n && *kind != 1) return NO; *kind = 1; (*n)++; return YES;
+    case 'd': if (*n && *kind != 2) return NO; *kind = 2; (*n)++; return YES;
+    case '[': {
+        const char *p = t + 1; long c = strtol(p, (char **)&p, 10);
+        for (long i = 0; i < c; i++) if (!hfa_walk(p, kind, n)) return NO;
+        return YES;
+    }
+    case '{': case '(': {
+        char close = *t == '{' ? '}' : ')';
+        const char *p = t + 1;
+        while (*p && *p != '=' && *p != close) p++;
+        if (*p != '=') return NO;
+        p++;
+        while (*p && *p != close) {
+            if (*p == '"') { p = strchr(p + 1, '"'); if (!p) return NO; p++; continue; }
+            if (!hfa_walk(p, kind, n)) return NO;
+            p = skip_type(p);
+        }
+        return YES;
+    }
+    default: return NO;
+    }
+}
+#endif
+
 static void classify(isim_arginfo *ai) {
     NSUInteger size = 0, align = 1;
     int cls[2] = {0, 0}; BOOL mem = NO;
     layout(ai->type, &size, &align, 0, cls, &mem);
     ai->code = *skip_quals(ai->type);
     ai->size = size; ai->align = align;
+#if ISIM_ARM64
+    {
+        int kind = 0, n = 0;
+        ai->hfa = size && hfa_walk(ai->type, &kind, &n) && n >= 1 && n <= 4 ? kind : 0;
+        ai->hn = ai->hfa ? n : 0;
+        mem = ai->hfa ? NO : size > 16;           /* an HFA of up to 4 members stays in registers */
+    }
+#else
     if (size > 16) mem = YES;
+#endif
     ai->memory = mem;
     ai->nwords = (int)((size + 7) / 8);
     for (int w = 0; w < 2; w++) ai->cls[w] = cls[w] == CLS_NONE ? CLS_SSE : cls[w];
@@ -213,14 +268,22 @@ static uint64_t scalar_word(const isim_arginfo *ai, const uint8_t *src, NSUInteg
     default: return (uint32_t)w;
     }
 }
-/* register / stack placement cursor */
+/* register / stack placement cursor (x86-64: ng integer, nx SSE registers; arm64: ng integer, nv vector registers) */
 typedef struct { int ng, nx; NSUInteger ns; } place_t;
+#if ISIM_ARM64
+static BOOL in_registers(const isim_arginfo *ai, place_t *pc) {
+    if (ai->memory || !ai->size) return NO;
+    if (ai->hfa) return pc->nx + ai->hn <= 8;      /* one v register per member */
+    return pc->ng + (int)((ai->size + 7) / 8) <= 8;
+}
+#else
 static BOOL in_registers(const isim_arginfo *ai, place_t *pc) {
     if (ai->memory || !ai->size) return NO;
     int g = 0, x = 0;
     for (int w = 0; w < ai->nwords; w++) { if (ai->cls[w] == CLS_SSE) x++; else g++; }
     return pc->ng + g <= 6 && pc->nx + x <= 8;
 }
+#endif
 static NSUInteger stack_slot(const isim_arginfo *ai, place_t *pc) {
     if (ai->align > 8) pc->ns = align_up(pc->ns, 2);
     NSUInteger at = pc->ns;
@@ -310,33 +373,76 @@ static void release_value(const isim_arginfo *ai, void *slot) {
 - (void)invokeUsingIMP:(IMP)imp { [self _isim_invokeIMP:imp]; }
 - (void)_isim_invokeIMP:(IMP)imp {
     isim_arginfo *ri = &_sig->_ret;
+#if ISIM_ARM64
+    /* arm64: a result too large for the registers comes back through the memory pointer in x8, which the call frame
+     * sets before the call; there is no _stret variant of objc_msgSend to select */
+    BOOL indirect = ri->size && !ri->hfa && ri->size > 16;
+#else
     BOOL stret = ri->memory && ri->size;
+#endif
     if (!self.target && !imp) { memset(_ret, 0, ri->size); return; }
     isim_objc_call c; memset(&c, 0, sizeof c);
     NSUInteger maxstack = _sig->_frameLength / 8 + 2 * _sig->_count + 2;
     uint64_t *stack = calloc(maxstack, 8);
     place_t pc = {0, 0, 0};
+#if ISIM_ARM64
+    if (indirect) c.x8 = (uint64_t)(uintptr_t)_ret;
+#else
     if (stret) c.gpr[pc.ng++] = (uint64_t)(uintptr_t)_ret;
+#endif
     for (NSUInteger i = 0; i < _sig->_count; i++) {
         isim_arginfo *ai = &_sig->_args[i];
         const uint8_t *src = _args + ai->offset;
         if (!ai->size) continue;
         if (in_registers(ai, &pc)) {
+#if ISIM_ARM64
+            if (ai->hfa) {
+                NSUInteger step = ai->hfa == 1 ? 4 : 8;
+                for (int m = 0; m < ai->hn; m++) {
+                    uint64_t v = 0;
+                    memcpy(&v, src + step * m, step);
+                    c.vr[pc.nx++][0] = v;                    /* each member in the low half of its own v register */
+                }
+            } else {
+                for (int w = 0; w < ai->nwords; w++) {
+                    NSUInteger n = ai->size - w * 8 < 8 ? ai->size - w * 8 : 8;
+                    c.gpr[pc.ng++] = scalar_word(ai, src + w * 8, n);
+                }
+            }
+#else
             for (int w = 0; w < ai->nwords; w++) {
                 NSUInteger n = ai->size - w * 8 < 8 ? ai->size - w * 8 : 8;
                 uint64_t v = scalar_word(ai, src + w * 8, n);
                 if (ai->cls[w] == CLS_SSE) c.xmm[pc.nx++][0] = v; else c.gpr[pc.ng++] = v;
             }
+#endif
         } else {
             NSUInteger at = stack_slot(ai, &pc);
             if (ai->nwords == 1 && !ai->memory) stack[at] = scalar_word(ai, src, ai->size);
             else memcpy(stack + at, src, ai->size);
         }
     }
+#if ISIM_ARM64
+    c.fn = imp ? (void *)imp : (void *)objc_msgSend;
+#else
     c.fn = imp ? (void *)imp : stret ? (void *)objc_msgSend_stret : (void *)objc_msgSend;
+#endif
     c.stack = stack; c.nstack = pc.ns; c.nvec = pc.nx;
     @try { isim_objc_call_frame(&c); }
     @finally { free(stack); }
+#if ISIM_ARM64
+    if (ri->size && !indirect) {
+        if (ri->hfa) {
+            NSUInteger step = ri->hfa == 1 ? 4 : 8;
+            for (int m = 0; m < ri->hn; m++) memcpy(_ret + step * m, &c.ret_vr[m][0], step);
+        } else {
+            for (int w = 0; w < ri->nwords; w++) {
+                NSUInteger n = ri->size - w * 8 < 8 ? ri->size - w * 8 : 8;
+                memcpy(_ret + w * 8, &c.ret_gpr[w], n);
+            }
+        }
+    }
+#else
     if (!stret && ri->size) {
         int g = 0, x = 0;
         for (int w = 0; w < ri->nwords; w++) {
@@ -345,6 +451,7 @@ static void release_value(const isim_arginfo *ai, void *slot) {
             memcpy(_ret + w * 8, &v, n);
         }
     }
+#endif
     if (_retained) retain_value(ri, _ret);
 }
 
@@ -352,17 +459,33 @@ static void release_value(const isim_arginfo *ai, void *slot) {
 - (void)_isim_loadFrame:(isim_objc_frame *)f {
     isim_arginfo *ri = &_sig->_ret;
     place_t pc = {0, 0, 0};
+#if ISIM_ARM64
+    (void)ri;                    /* arm64: no hidden result pointer among the arguments (x8 carries it) */
+#else
     if (ri->memory && ri->size) pc.ng = 1;
+#endif
     for (NSUInteger i = 0; i < _sig->_count; i++) {
         isim_arginfo *ai = &_sig->_args[i];
         uint8_t *dst = _args + ai->offset;
         if (!ai->size) continue;
         if (in_registers(ai, &pc)) {
+#if ISIM_ARM64
+            if (ai->hfa) {
+                NSUInteger step = ai->hfa == 1 ? 4 : 8;
+                for (int m = 0; m < ai->hn; m++) memcpy(dst + step * m, &f->vr[pc.nx++][0], step);
+            } else {
+                for (int w = 0; w < ai->nwords; w++) {
+                    NSUInteger n = ai->size - w * 8 < 8 ? ai->size - w * 8 : 8;
+                    memcpy(dst + w * 8, &f->gpr[pc.ng++], n);
+                }
+            }
+#else
             for (int w = 0; w < ai->nwords; w++) {
                 NSUInteger n = ai->size - w * 8 < 8 ? ai->size - w * 8 : 8;
                 uint64_t v = ai->cls[w] == CLS_SSE ? f->xmm[pc.nx++][0] : f->gpr[pc.ng++];
                 memcpy(dst + w * 8, &v, n);
             }
+#endif
         } else {
             NSUInteger at = stack_slot(ai, &pc);
             memcpy(dst, f->stack + at, ai->size);
@@ -372,6 +495,26 @@ static void release_value(const isim_arginfo *ai, void *slot) {
 - (void)_isim_storeReturnInFrame:(isim_objc_frame *)f {
     isim_arginfo *ri = &_sig->_ret;
     if (!ri->size) return;
+#if ISIM_ARM64
+    if (!ri->hfa && ri->size > 16) {                       /* the caller's buffer, passed in x8 */
+        void *buf = (void *)(uintptr_t)f->x8;
+        if (buf) memcpy(buf, _ret, ri->size);
+        return;
+    }
+    if (ri->hfa) {
+        NSUInteger step = ri->hfa == 1 ? 4 : 8;
+        for (int m = 0; m < ri->hn; m++) {
+            uint64_t v = 0;
+            memcpy(&v, _ret + step * m, step);
+            f->ret_vr[m][0] = v;
+        }
+        return;
+    }
+    for (int w = 0; w < ri->nwords; w++) {
+        NSUInteger n = ri->size - w * 8 < 8 ? ri->size - w * 8 : 8;
+        f->ret_gpr[w] = scalar_word(ri, _ret + w * 8, n);
+    }
+#else
     if (ri->memory) {
         void *buf = (void *)(uintptr_t)f->gpr[0];
         if (buf) memcpy(buf, _ret, ri->size);
@@ -384,6 +527,7 @@ static void release_value(const isim_arginfo *ai, void *slot) {
         uint64_t v = scalar_word(ri, _ret + w * 8, n);
         if (ri->cls[w] == CLS_SSE) f->ret_xmm[x++][0] = v; else f->ret_gpr[g++] = v;
     }
+#endif
 }
 - (NSString *)description {
     return [NSString stringWithFormat:@"<NSInvocation: %p> -[%s %s] (%lu arguments)", self, self.target ? object_getClassName(self.target) : "nil",
