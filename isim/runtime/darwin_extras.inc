@@ -521,15 +521,15 @@ __asm__(".text\n"
         ".globl d_sscanf_l\n.type d_sscanf_l,%function\nd_sscanf_l:\n  mov x3, sp\n  b d_sscanf_l_v\n"
         ".globl d_printf_l\n.type d_printf_l,%function\nd_printf_l:\n  mov x2, sp\n  b d_printf_l_v\n"
         ".globl d_fprintf_l\n.type d_fprintf_l,%function\nd_fprintf_l:\n  mov x3, sp\n  b d_fprintf_l_v\n");
-ISIM_ASM_CALLEE int d_vsnprintf_l(char *s, size_t n, locale_t l, const char *f, void *ap) {
+ISIM_ASM_CALLEE ISIM_GUEST_ABI int d_vsnprintf_l(char *s, size_t n, locale_t l, const char *f, void *ap) {
     va_list v; isim_va_from_darwin(&v, ap);
     locale_t old = uselocale(LOC(l)); int r = vsnprintf(s, n, f, v); uselocale(old); return r;
 }
-ISIM_ASM_CALLEE int d_vasprintf_l(char **s, locale_t l, const char *f, void *ap) {
+ISIM_ASM_CALLEE ISIM_GUEST_ABI int d_vasprintf_l(char **s, locale_t l, const char *f, void *ap) {
     va_list v; isim_va_from_darwin(&v, ap);
     locale_t old = uselocale(LOC(l)); int r = vasprintf(s, f, v); uselocale(old); return r;
 }
-ISIM_ASM_CALLEE int d_vsscanf_l(const char *s, locale_t l, const char *f, void *ap) {
+ISIM_ASM_CALLEE ISIM_GUEST_ABI int d_vsscanf_l(const char *s, locale_t l, const char *f, void *ap) {
     va_list v; isim_va_from_darwin(&v, ap);
     locale_t old = uselocale(LOC(l)); int r = vsscanf(s, f, v); uselocale(old); return r;
 }
