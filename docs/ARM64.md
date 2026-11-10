@@ -71,6 +71,22 @@ OS_MATRIX=1 isim/build.py test
 CI: `.github/workflows/arm64.yml` builds and caches the same graph on GitHub's `ubuntu-24.04-arm` runners and installs
 swift.org's aarch64 toolchain (`isim/ci/swift-toolchain.sh` pins its SHA-256 per architecture).
 
+## Status (measured, 2026-11-10)
+
+| what | result |
+|---|---|
+| `isim/build.py ci build` on ubuntu-24.04-arm | **green**: 1329/1329 targets, the host runtime, the SDK, every framework, the Swift stdlib/overlays and every sample/test app |
+| portability check | OK |
+| ABI check | OK (arm64 has no baseline yet; see above) |
+| `isim/build.py ci test` on arm64 | **610 passed, 739 failed** |
+
+The build is real: the apps it produces are arm64 Mach-O that the runtime loads and executes on the arm64 host. The
+failures are in the runtime's arm64 ABI work for whole apps, not in the build: a typical report is an
+`EXC_BAD_ACCESS` inside Swift concurrency's `__swift_run_job` when Foundation's worker pool first runs a job, and
+several UI tests that never reach their control channel. `.github/workflows/arm64-debug.yml` runs one test and prints
+the guest crash report (`isim/ci/crash-summary.py`), which is the loop for the remaining work; the frame walk itself
+(`runtime/objc_exc.c`, arm64 compact unwind) needs the same attention, since the reports still carry unmapped frames.
+
 ## Status
 
 What the arm64 build has proved so far, in order: the host runtime links and runs (`--print-exports` drives the `.tbd`
