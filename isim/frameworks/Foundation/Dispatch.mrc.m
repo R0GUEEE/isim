@@ -26,7 +26,6 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <mach/mach.h>
 
 void isim_main_enqueue_f(double delay, dispatch_function_t f, void *ctx);   /* Runtime.m */
@@ -228,7 +227,7 @@ static void *pool_worker(void *arg) {
          * worker crashes. Keep it bounded: the first 128 jobs are enough to locate the first bad context/function. */
         static int trace_jobs;
         if (getenv("ISIM_TRACE_POOL") && __atomic_add_fetch(&trace_jobs, 1, __ATOMIC_RELAXED) <= 128)
-            fprintf(stderr, "isim pool job: tid=%ld job=%p f=%p ctx=%p\n", (long)syscall(SYS_gettid), (void *)j,
+            fprintf(stderr, "isim pool job: tid=%ld job=%p f=%p ctx=%p\n", (long)(uintptr_t)pthread_self(), (void *)j,
                     (void *)j->f, j->ctx);
         @autoreleasepool { j->f(j->ctx); }
         free(j);
