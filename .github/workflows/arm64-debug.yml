@@ -20,6 +20,11 @@ jobs:
           load: true
           tags: isim-ci
           cache-from: type=gha,scope=arm64-ci
+      - name: Pinned third-party sources
+        uses: actions/cache/restore@v5
+        with:
+          path: third_party
+          key: third-party-arm64-${{ hashFiles('isim/buildlib/fetch.py') }}
       - name: Build (from the last arm64 build)
         uses: actions/cache/restore@v5
         with:
