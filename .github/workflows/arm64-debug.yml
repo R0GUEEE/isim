@@ -43,7 +43,14 @@ jobs:
           mkdir -p /tmp/isim-data
           export ISIM_DATA=/tmp/isim-data ISIM_STANDALONE=1 ISIM_MDNS=0 ISIM_AASA_FETCH=0
           export ISIM_GAMECENTER=/tmp/gamecenter ISIM_SHAREPLAY=/tmp/shareplay ISIM_GAMESAVE=/tmp/gamesave
-          gdb -batch -ex run -ex 'info registers x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x16 x17 x18 x19 x20 x21 x22 x23 x24 x25 x26 x27 x28 x29 x30 sp pc' \
+          gdb -batch \
+              -ex run \
+              -ex 'printf "\n=== fault symbol / instruction ===\n"' -ex 'info symbol $pc' -ex 'x/12i $pc-24' \
+              -ex 'printf "\n=== fault addr / runtime TLS ===\n"' -ex 'p/x $_siginfo._sifields._sigfault.si_addr' \
+              -ex 'p treg_key' -ex 'p ntregs' -ex 'p captregs' -ex 'p tregs[0]' \
+              -ex 'info proc mappings' \
+              -ex 'printf "\n=== registers / backtrace ===\n"' \
+              -ex 'info registers x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x16 x17 x18 x19 x20 x21 x22 x23 x24 x25 x26 x27 x28 x29 x30 sp pc' \
               -ex 'x/12gx $sp' -ex 'bt 24' --args isim/out/bin/isim-runtime --root isim/out/sdk isim/out/apps/UTTypesTest.app/UTTypesTest \
               > /tmp/repro-gdb.txt 2>&1
           echo "=== direct GDB repro ==="; cat /tmp/repro-gdb.txt
