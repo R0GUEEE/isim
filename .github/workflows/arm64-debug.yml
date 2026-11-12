@@ -34,6 +34,21 @@ jobs:
         with:
           path: ~/swift-toolchain
           key: swift-6.2.4-ubuntu24.04-aarch64      # arm64.yml's SWIFT_KEY
+      - name: GDB direct reproduction
+        run: |
+          cat > /tmp/repro.sh <<'SH'
+          set +e
+          cd /work
+          apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq gdb >/dev/null 2>&1
+          mkdir -p /tmp/isim-data
+          export ISIM_DATA=/tmp/isim-data ISIM_STANDALONE=1 ISIM_MDNS=0 ISIM_AASA_FETCH=0
+          export ISIM_GAMECENTER=/tmp/gamecenter ISIM_SHAREPLAY=/tmp/shareplay ISIM_GAMESAVE=/tmp/gamesave
+          gdb -batch -ex run -ex 'info registers x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x16 x17 x18 x19 x20 x21 x22 x23 x24 x25 x26 x27 x28 x29 x30 sp pc' \
+              -ex 'x/12gx $sp' -ex 'bt 24' --args isim/out/bin/isim-runtime --root isim/out/sdk isim/out/apps/UTTypesTest.app/UTTypesTest \
+              > /tmp/repro-gdb.txt 2>&1
+          echo "=== direct GDB repro ==="; cat /tmp/repro-gdb.txt
+          SH
+          docker run --rm -v "$PWD:/work" -w /work -v /tmp/repro.sh:/tmp/repro.sh isim-ci sh /tmp/repro.sh || true
       - name: One test
         run: |
           docker run --rm -v "$PWD:$PWD" -w "$PWD" \
