@@ -44,6 +44,10 @@ jobs:
           export ISIM_DATA=/tmp/isim-data ISIM_STANDALONE=1 ISIM_MDNS=0 ISIM_AASA_FETCH=0
           export ISIM_GAMECENTER=/tmp/gamecenter ISIM_SHAREPLAY=/tmp/shareplay ISIM_GAMESAVE=/tmp/gamesave
           gdb -batch \
+              -ex 'set breakpoint pending on' \
+              -ex 'break pthread_setspecific if $x0 == 0 && $x1 == 1' \
+              -ex 'commands 1' -ex 'silent' -ex 'printf "\n=== pthread_setspecific(key=0,value=1) ===\n"' \
+              -ex 'info symbol $pc' -ex 'bt 6' -ex 'continue' -ex 'end' \
               -ex run \
               -ex 'printf "\n=== fault symbol / instruction ===\n"' -ex 'info symbol $pc' -ex 'x/12i $pc-24' \
               -ex 'printf "\n=== fault addr / runtime TLS ===\n"' -ex 'p/x $_siginfo._sifields._sigfault.si_addr' \
