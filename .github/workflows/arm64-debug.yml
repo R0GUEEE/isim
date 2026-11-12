@@ -42,7 +42,7 @@ jobs:
           apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq gdb >/dev/null 2>&1
           mkdir -p /tmp/isim-data
           export ISIM_DATA=/tmp/isim-data ISIM_STANDALONE=1 ISIM_MDNS=0 ISIM_AASA_FETCH=0
-          export ISIM_GAMECENTER=/tmp/gamecenter ISIM_SHAREPLAY=/tmp/shareplay ISIM_GAMESAVE=/tmp/gamesave
+          export ISIM_GAMECENTER=/tmp/gamecenter ISIM_SHAREPLAY=/tmp/shareplay ISIM_GAMESAVE=/tmp/gamesave ISIM_TRACE_POOL=1
           cat > /tmp/gdb.cmd <<'GDB'
           set breakpoint pending on
           break pthread_setspecific if $x0 == 0 && $x1 == 1
