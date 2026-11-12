@@ -43,20 +43,32 @@ jobs:
           mkdir -p /tmp/isim-data
           export ISIM_DATA=/tmp/isim-data ISIM_STANDALONE=1 ISIM_MDNS=0 ISIM_AASA_FETCH=0
           export ISIM_GAMECENTER=/tmp/gamecenter ISIM_SHAREPLAY=/tmp/shareplay ISIM_GAMESAVE=/tmp/gamesave
-          gdb -batch \
-              -ex 'set breakpoint pending on' \
-              -ex 'break pthread_setspecific if $x0 == 0 && $x1 == 1' \
-              -ex 'commands 1' -ex 'silent' -ex 'printf "\n=== pthread_setspecific(key=0,value=1) ===\n"' \
-              -ex 'printf "thread %d: ", $_thread' -ex 'bt 6' -ex 'continue' -ex 'end' \
-              -ex run \
-              -ex 'printf "\n=== fault symbol / instruction ===\n"' -ex 'info symbol $pc' -ex 'x/12i $pc-24' \
-              -ex 'printf "\n=== fault addr / runtime TLS ===\n"' -ex 'p/x $_siginfo._sifields._sigfault.si_addr' \
-              -ex 'p treg_key' -ex 'p ntregs' -ex 'p captregs' -ex 'p tregs[0]' \
-              -ex 'info proc mappings' \
-              -ex 'printf "\n=== registers / backtrace ===\n"' \
-              -ex 'info registers x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x16 x17 x18 x19 x20 x21 x22 x23 x24 x25 x26 x27 x28 x29 x30 sp pc' \
-              -ex 'x/12gx $sp' -ex 'bt 24' --args isim/out/bin/isim-runtime --root isim/out/sdk isim/out/apps/UTTypesTest.app/UTTypesTest \
-              > /tmp/repro-gdb.txt 2>&1
+          cat > /tmp/gdb.cmd <<'GDB'
+          set breakpoint pending on
+          break pthread_setspecific if $x0 == 0 && $x1 == 1
+          commands 1
+            silent
+            printf "\n=== pthread_setspecific(key=0,value=1) ===\n"
+            bt 8
+            continue
+          end
+          run
+          printf "\n=== fault symbol / instruction ===\n"
+          info symbol $pc
+          x/12i $pc-24
+          printf "\n=== fault addr / runtime TLS ===\n"
+          p/x $_siginfo._sifields._sigfault.si_addr
+          p treg_key
+          p ntregs
+          p captregs
+          p tregs[0]
+          info proc mappings
+          printf "\n=== registers / backtrace ===\n"
+          info registers x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x16 x17 x18 x19 x20 x21 x22 x23 x24 x25 x26 x27 x28 x29 x30 sp pc
+          x/12gx $sp
+          bt 24
+          GDB
+          gdb -batch -x /tmp/gdb.cmd --args isim/out/bin/isim-runtime --root isim/out/sdk isim/out/apps/UTTypesTest.app/UTTypesTest > /tmp/repro-gdb.txt 2>&1
           echo "=== direct GDB repro ==="; cat /tmp/repro-gdb.txt
           SH
           docker run --rm -v "$PWD:/work" -w /work -v /tmp/repro.sh:/tmp/repro.sh isim-ci sh /tmp/repro.sh || true
