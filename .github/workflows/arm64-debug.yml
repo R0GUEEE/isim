@@ -52,6 +52,27 @@ jobs:
             bt 8
             continue
           end
+          break /work/isim/frameworks/Foundation/Dispatch.mrc.m:226 if j->ctx == 0
+          commands 2
+            silent
+            printf "\n=== dispatch job has NULL context ===\n"
+            p j
+            p j->f
+            info symbol j->f
+            x/8i j->f
+            bt 12
+            continue
+          end
+          break thread_trampoline
+          commands 3
+            silent
+            printf "\n=== native thread callback ===\n"
+            p s.fn
+            p s.arg
+            info symbol s.fn
+            bt 5
+            continue
+          end
           run
           printf "\n=== fault symbol / instruction ===\n"
           info symbol $pc
