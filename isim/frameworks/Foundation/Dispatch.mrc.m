@@ -31,7 +31,7 @@
 void isim_main_enqueue_f(double delay, dispatch_function_t f, void *ctx);   /* Runtime.m */
 double isim_main_fire_due(void);                                            /* Runtime.m: runs due items, returns next delay */
 void isim_main_wait(double seconds);
-const char *isim_image_path_for_address(const void *addr);                                        /* Runtime.m: sleeps until new main work or timeout */
+                                        /* Runtime.m: sleeps until new main work or timeout */
 /* isim libSystem (private): the Linux facilities behind the sources' events */
 long isim_fd_write_space(int fd);                     /* free space of a pipe / socket, -1 for other descriptors */
 long isim_fd_read_available(int fd);                  /* readable bytes, or pending connections of a listening socket */
