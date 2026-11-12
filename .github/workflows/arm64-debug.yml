@@ -34,6 +34,11 @@ jobs:
         with:
           path: ~/swift-toolchain
           key: swift-6.2.4-ubuntu24.04-aarch64      # arm64.yml's SWIFT_KEY
+      - name: Rebuild changed sources
+        run: |
+          docker run --rm -v "$PWD:$PWD" -w "$PWD" \
+            -v "$HOME/swift-toolchain:$HOME/swift-toolchain:ro" -e ISIM_SWIFT_TOOLCHAIN="$HOME/swift-toolchain" \
+            -e CI=1 isim-ci python3 isim/build.py build
       - name: GDB direct reproduction
         run: |
           cat > /tmp/repro.sh <<'SH'
