@@ -30,7 +30,8 @@
 
 void isim_main_enqueue_f(double delay, dispatch_function_t f, void *ctx);   /* Runtime.m */
 double isim_main_fire_due(void);                                            /* Runtime.m: runs due items, returns next delay */
-void isim_main_wait(double seconds);                                        /* Runtime.m: sleeps until new main work or timeout */
+void isim_main_wait(double seconds);
+const char *isim_image_path_for_address(const void *addr);                                        /* Runtime.m: sleeps until new main work or timeout */
 /* isim libSystem (private): the Linux facilities behind the sources' events */
 long isim_fd_write_space(int fd);                     /* free space of a pipe / socket, -1 for other descriptors */
 long isim_fd_read_available(int fd);                  /* readable bytes, or pending connections of a listening socket */
@@ -226,8 +227,9 @@ static void *pool_worker(void *arg) {
         /* bounded diagnostic: the first 128 callback inputs let a crash report identify a bad Swift job pointer */
         static int trace_jobs;
         if (__atomic_add_fetch(&trace_jobs, 1, __ATOMIC_RELAXED) <= 128)
-            fprintf(stderr, "isim pool job: tid=%ld job=%p f=%p ctx=%p\n", (long)(uintptr_t)pthread_self(), (void *)j,
-                    (void *)j->f, j->ctx);
+            fprintf(stderr, "isim pool job: tid=%ld job=%p f=%p image=%s offset=%lx ctx=%p\n", (long)(uintptr_t)pthread_self(), (void *)j,
+                    (void *)j->f, isim_image_path_for_address((void *)j->f) ?: "<host>",
+                    (unsigned long)(uintptr_t)j->f, j->ctx);
         @autoreleasepool { j->f(j->ctx); }
         free(j);
     }
